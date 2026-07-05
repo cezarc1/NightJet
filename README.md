@@ -94,11 +94,31 @@ uv run nightjet enhance \
   --engine outputs/nightjet-edge-v1-fp16.plan
 ```
 
+### Reference Orin Snapshot
+
+On July 5, 2026, the live KubeJet `EdgeVisionPipeline` on the local Jetson Orin
+Nano reported the following `/metrics` sample for a `1280x720` UYVY camera path
+at a requested 30 FPS capture rate. The runtime used the TensorRT temporal
+backend in a 3-way MJPEG demo view with `--stream-fps 15` and JPEG quality 82.
+
+| Runtime metric | Observed value |
+| --- | --- |
+| Recent stream-loop FPS | 7.66 FPS |
+| Frame capture latency | 2.0 ms |
+| NightJet TensorRT model latency | 44.7 ms |
+| Classical baseline latency | 30.3 ms |
+| Render + JPEG encode latency | 49.1 ms |
+| Full stream-loop latency | 127.5 ms |
+
+This is an end-to-end live-demo snapshot, not a model-only max-FPS benchmark.
+The measured FPS is lower than the 15 FPS stream cap because the path includes
+model inference, a classical baseline, 3-way rendering, and JPEG encoding.
+
 For managed Orin deployments, build the runtime image from
 [`docker/Dockerfile.orin`](docker/Dockerfile.orin) and publish it as an
 immutable `ghcr.io/cezarc1/nightjet:<tag>-orin` tag. KubeJet examples use the
-headless `nightjet serve` command; camera-specific tuning can still live in a
-private runtime repo.
+headless `nightjet serve` command; camera-specific tuning belongs in
+hardware-specific runtime manifests or companion repos.
 
 ## Public Weights
 
