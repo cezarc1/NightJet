@@ -1,0 +1,222 @@
+{
+  "created_from_local_artifacts": true,
+  "default_model": "nightjet-edge-v1",
+  "models": [
+    {
+      "artifacts": {
+        "checkpoint_sha256": "0f7d015d19000ea1ed17bfb45ff77a3ab62a169780f00f2c45560c0accac7ec6",
+        "checkpoint_size_bytes": 19705,
+        "onnx_sha256": "c8f40e65896de5edcdb82ed7990ddf4e33257ad873e06909f58dcae1f7673e6a",
+        "onnx_size_bytes": 16523
+      },
+      "checkpoint": "nightjet-edge-v1.pt",
+      "display_name": "NightJet Edge v1",
+      "evaluation": {
+        "hvi-darkir-reddit10-test": {
+          "frames_evaluated": 2,
+          "metrics": {
+            "brightness_gain": 4.94449520111084,
+            "clipping_rate": 0.00014919704861111112,
+            "contrast_gain": 2.386928081512451,
+            "detail_gain": 2.079988152742324,
+            "flat_region_noise": 0.04439276643097401,
+            "raw_teacher_mae": 0.1337694525718689,
+            "raw_teacher_psnr": 15.072418833676,
+            "target_detail_ratio": 0.47712652204934797,
+            "teacher_mae": 0.028848540037870407,
+            "teacher_psnr": 26.5805747926016,
+            "temporal_flicker_ratio": 1.7598278499339315
+          },
+          "scores": {
+            "cleanliness": 88.886889,
+            "detail": 51.999704,
+            "detail_seeking_score": 76.664177,
+            "teacher_agreement": 94.230292,
+            "temporal": 81.004304
+          },
+          "teacher_name": "hvi-darkir-reddit-10f"
+        },
+        "reddit-detail-probe": {
+          "frames_evaluated": 2,
+          "metrics": {
+            "brightness_gain": 4.94449520111084,
+            "clipping_rate": 0.00014919704861111112,
+            "contrast_gain": 2.386928081512451,
+            "detail_gain": 2.079988152742324,
+            "flat_region_noise": 0.04439276643097401,
+            "raw_teacher_mae": 0.1457882523536682,
+            "raw_teacher_psnr": 14.647630583536271,
+            "target_detail_ratio": 0.4654963169824426,
+            "teacher_mae": 0.03248235210776329,
+            "teacher_psnr": 26.285113566895767,
+            "temporal_flicker_ratio": 1.7598278499339315
+          },
+          "scores": {
+            "cleanliness": 88.886889,
+            "detail": 51.999704,
+            "detail_seeking_score": 76.409811,
+            "teacher_agreement": 93.50353,
+            "temporal": 81.004304
+          },
+          "teacher_name": "hvi-darkir-reddit-detail-v1"
+        }
+      },
+      "id": "nightjet-edge-v1",
+      "input_contract": {
+        "dtype": "float32",
+        "name": "luma_window",
+        "range": [
+          0.0,
+          1.0
+        ],
+        "semantics": "causal luma window; the latest frame is the final frame in the window",
+        "shape": "1x5xHxW"
+      },
+      "model_config": {
+        "base_channels": 16,
+        "detail_channels": 8,
+        "input_frames": 5,
+        "name": "edge-v1-reco-s2-c16-f5",
+        "residual_scale": 0.45,
+        "trunk_blocks": 2,
+        "trunk_scale": 2
+      },
+      "onnx": "nightjet-edge-v1.onnx",
+      "output_contract": {
+        "dtype": "float32",
+        "name": "enhanced_luma",
+        "range": [
+          0.0,
+          1.0
+        ],
+        "semantics": "enhanced luma for the latest frame",
+        "shape": "1x1xHxW"
+      },
+      "role": "default",
+      "source_checkpoint": "outputs/retrieved/edge-v1-reco-s2-c16-f5-detail-v1-5000/checkpoint.pt",
+      "source_run": "edge-v1-reco-s2-c16-f5-detail-v1-5000",
+      "summary": "Conservative default with better temporal stability.",
+      "training": {
+        "ema_available_in_source": true,
+        "public_state_dict": "model_state_dict",
+        "run_name": "edge-v1-reco-s2-c16-f5",
+        "seed": 1337,
+        "split_name": "train",
+        "split_uri": "data/bundles/hvi-darkir-60f-low-light-720p/splits.json",
+        "step": 5000,
+        "training_frames": 42
+      }
+    },
+    {
+      "artifacts": {
+        "checkpoint_sha256": "414b4c3f8b0bd5ac2276a78732ce603cb843b65e7f7f3f1a2dcc4afa3aa45c50",
+        "checkpoint_size_bytes": 19987,
+        "onnx_sha256": "13fdc719f6f591ee25eb438c2b58a75c39b8fc89ae394d30c0acfd6926199f49",
+        "onnx_size_bytes": 16523
+      },
+      "checkpoint": "nightjet-edge-v1-detail.pt",
+      "display_name": "NightJet Edge v1 Detail",
+      "evaluation": {
+        "hvi-darkir-reddit10-test": {
+          "frames_evaluated": 2,
+          "metrics": {
+            "brightness_gain": 5.398187637329102,
+            "clipping_rate": 0.0002511935763888889,
+            "contrast_gain": 2.9738783836364746,
+            "detail_gain": 3.05569818706509,
+            "flat_region_noise": 0.04210600443184376,
+            "raw_teacher_mae": 0.1337694525718689,
+            "raw_teacher_psnr": 15.072418833676,
+            "target_detail_ratio": 0.7009437272537584,
+            "teacher_mae": 0.03189491853117943,
+            "teacher_psnr": 24.215022716273893,
+            "temporal_flicker_ratio": 3.4979155802191526
+          },
+          "scores": {
+            "cleanliness": 89.44838,
+            "detail": 76.392455,
+            "detail_seeking_score": 78.554788,
+            "teacher_agreement": 93.621016,
+            "temporal": 37.55211
+          },
+          "teacher_name": "hvi-darkir-reddit-10f"
+        },
+        "reddit-detail-probe": {
+          "frames_evaluated": 2,
+          "metrics": {
+            "brightness_gain": 5.398187637329102,
+            "clipping_rate": 0.0002511935763888889,
+            "contrast_gain": 2.9738783836364746,
+            "detail_gain": 3.05569818706509,
+            "flat_region_noise": 0.04210600443184376,
+            "raw_teacher_mae": 0.1457882523536682,
+            "raw_teacher_psnr": 14.647630583536271,
+            "target_detail_ratio": 0.6838578623697287,
+            "teacher_mae": 0.0323367565870285,
+            "teacher_psnr": 25.148459571199567,
+            "temporal_flicker_ratio": 3.4979155802191526
+          },
+          "scores": {
+            "cleanliness": 89.44838,
+            "detail": 76.392455,
+            "detail_seeking_score": 78.52386,
+            "teacher_agreement": 93.532649,
+            "temporal": 37.55211
+          },
+          "teacher_name": "hvi-darkir-reddit-detail-v1"
+        }
+      },
+      "id": "nightjet-edge-v1-detail",
+      "input_contract": {
+        "dtype": "float32",
+        "name": "luma_window",
+        "range": [
+          0.0,
+          1.0
+        ],
+        "semantics": "causal luma window; the latest frame is the final frame in the window",
+        "shape": "1x5xHxW"
+      },
+      "model_config": {
+        "base_channels": 16,
+        "detail_channels": 8,
+        "input_frames": 5,
+        "name": "edge-v1-reco-s2-c16-f5-reddit10",
+        "residual_scale": 0.45,
+        "trunk_blocks": 2,
+        "trunk_scale": 2
+      },
+      "onnx": "nightjet-edge-v1-detail.onnx",
+      "output_contract": {
+        "dtype": "float32",
+        "name": "enhanced_luma",
+        "range": [
+          0.0,
+          1.0
+        ],
+        "semantics": "enhanced luma for the latest frame",
+        "shape": "1x1xHxW"
+      },
+      "role": "detail",
+      "source_checkpoint": "outputs/retrieved/edge-v1-reco-s2-c16-f5-reddit10-5000/checkpoint.pt",
+      "source_run": "edge-v1-reco-s2-c16-f5-reddit10-5000",
+      "summary": "Sharper detail-seeking variant with more temporal flicker risk.",
+      "training": {
+        "ema_available_in_source": true,
+        "public_state_dict": "model_state_dict",
+        "run_name": "edge-v1-reco-s2-c16-f5-reddit10",
+        "seed": 1337,
+        "split_name": "train",
+        "split_uri": "data/bundles/hvi-darkir-reddit-10f-low-light-720p/splits.json",
+        "step": 5000,
+        "training_frames": 6
+      }
+    }
+  ],
+  "notes": {
+    "checkpoint_format": "Public .pt files contain only model_state_dict, model_config, and metadata; optimizer, scaler, losses, and EMA tensors are omitted.",
+    "license": "Repository code is MIT. Model weights are research/demo artifacts distilled from teacher outputs; review MODEL_CARD.md before redistribution or production use.",
+    "tensorRT": "TensorRT .plan/.engine files are target-specific build outputs and are not canonical model artifacts."
+  },
+  "schema_version": 1
+}

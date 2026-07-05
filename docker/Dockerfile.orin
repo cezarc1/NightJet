@@ -1,0 +1,33 @@
+FROM nvcr.io/nvidia/pytorch:25.08-py3-igpu
+
+WORKDIR /opt/nightjet
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,video \
+    PYTHONPATH=/opt/nightjet/src
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      python3-opencv \
+      python3-yaml \
+      v4l-utils && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --no-cache-dir \
+      imageio \
+      imageio-ffmpeg \
+      pillow \
+      pydantic \
+      rich \
+      typer
+
+COPY README.md LICENSE pyproject.toml /opt/nightjet/
+COPY src /opt/nightjet/src
+COPY weights /opt/nightjet/weights
+
+RUN printf '%s\n' '#!/usr/bin/env sh' 'exec python3 -m nightjet.cli "$@"' \
+      >/usr/local/bin/nightjet && \
+    chmod +x /usr/local/bin/nightjet
+
+ENTRYPOINT ["nightjet"]
+CMD ["serve", "--camera", "/dev/video0", "--resolution", "1280x720", "--pixel-format", "UYVY", "--fps", "30", "--engine", "/models/nightjet-edge-v1-fp16.plan", "--port", "8000"]

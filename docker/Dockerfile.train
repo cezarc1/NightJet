@@ -1,0 +1,27 @@
+FROM python:3.12.12-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    UV_SYSTEM_PYTHON=1 \
+    UV_LINK_MODE=copy \
+    HF_HOME=/workspace/.cache/huggingface \
+    HF_HUB_CACHE=/workspace/.cache/huggingface/hub
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      rsync && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --no-cache-dir uv
+
+WORKDIR /opt/nightjet
+COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY src ./src
+RUN uv pip install --system --compile-bytecode .
+
+COPY --from=kubetorch /python_client /opt/kubetorch/python_client
+RUN uv pip install --system --compile-bytecode '/opt/kubetorch/python_client[client]'
+
+WORKDIR /workspace

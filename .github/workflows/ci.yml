@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.12.12
+
+      - name: Install just
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y just
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Check
+        run: just check
+
+      - name: CLI image smoke
+        run: |
+          uv run nightjet enhance \
+            --input examples/assets/input.jpg \
+            --output /tmp/nightjet-ci.png \
+            --weights weights/nightjet-edge-v1.pt
+
+      - name: Example script smoke
+        run: |
+          uv run python examples/enhance_image.py \
+            examples/assets/input.jpg \
+            --output /tmp/nightjet-example.png \
+            --weights weights/nightjet-edge-v1.pt
+
+      - name: ONNX export smoke
+        run: |
+          uv run nightjet export-onnx \
+            --checkpoint weights/nightjet-edge-v1.pt \
+            --output /tmp/nightjet-ci.onnx \
+            --height 64 \
+            --width 64 \
+            --input-frames 5

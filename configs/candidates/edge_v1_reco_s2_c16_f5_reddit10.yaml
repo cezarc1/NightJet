@@ -1,0 +1,32 @@
+run:
+  name: edge-v1-reco-s2-c16-f5-reddit10
+  seed: 1337
+model:
+  name: edge-v1-reco-s2-c16-f5-reddit10
+  input_frames: 5
+  base_channels: 16
+  detail_channels: 8
+  trunk_blocks: 2
+  trunk_scale: 2
+  residual_scale: 0.45
+data:
+  bundle_uri: data/bundles/hvi-darkir-reddit-10f-low-light-720p
+  resolution: [720, 1280]
+  crop_size: 192
+  input_frames: 5
+  split_uri: data/bundles/hvi-darkir-reddit-10f-low-light-720p/splits.json
+  split_name: train
+training:
+  batch_size: 8
+  max_steps: 5000
+  learning_rate: 0.0003
+  weight_decay: 0.00001
+  amp: true
+  warmup_steps: 500
+  scheduler: cosine
+  ema_decay: 0.999
+loss:
+  reconstruction_weight: 1.0
+  edge_weight: 0.3
+  brightness_weight: 0.2
+  smoothness_weight: 0.05

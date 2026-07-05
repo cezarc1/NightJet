@@ -1,0 +1,73 @@
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "nightjet"
+version = "0.2.0"
+description = "Tiny passive low-light image and video enhancement models for Jetson-class edge devices."
+readme = "README.md"
+requires-python = ">=3.12.12,<3.13"
+license = "MIT"
+authors = [{ name = "Cezar Coelho" }]
+keywords = [
+    "computer-vision",
+    "edge-ai",
+    "jetson",
+    "low-light-enhancement",
+    "onnx",
+    "pytorch",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+dependencies = [
+    "imageio>=2.37.2",
+    "imageio-ffmpeg>=0.6.0",
+    "numpy>=2.3.5",
+    "onnx>=1.20.0",
+    "onnxscript>=0.5.6",
+    "pillow>=12.2.0",
+    "pydantic>=2.12.5",
+    "pyyaml>=6.0.3",
+    "rich>=14.2.0",
+    "torch>=2.9.1",
+    "typer>=0.20.0",
+]
+
+[project.optional-dependencies]
+orin = [
+    "opencv-python>=4.10.0.84",
+]
+
+[project.urls]
+Repository = "https://github.com/cezarc1/nightjet"
+HuggingFaceModel = "https://huggingface.co/ggamecrazy/nightjet-edge-v1"
+HuggingFaceSpace = "https://huggingface.co/spaces/ggamecrazy/nightjet"
+
+[project.scripts]
+nightjet = "nightjet.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.14.8",
+    "ty>=0.0.1a23",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "RUF", "SIM", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ty.src]
+include = ["src", "tests"]
