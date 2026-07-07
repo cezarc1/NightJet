@@ -5,6 +5,11 @@ Jetson-class edge deployment.
 
 ![NightJet before/after comparison generated from the default public weight.](examples/assets/comparison.jpg)
 
+| | |
+| --- | --- |
+| **Jetson Orin Nano Super** | **82.9 inferences/sec** — 12.0 ms/frame, FP16 TensorRT @ 1280×720 ([benchmark](#benchmark-jetson-orin-nano-super)) |
+| **Model size** | 2,778 parameters — under 20 KB of weights |
+
 NightJet takes a short temporal window of low-light luma frames and predicts an
 enhanced luma frame. The public repo includes the default PyTorch weight, a
 matching ONNX export, examples, and the training/export tools used to produce
@@ -127,18 +132,8 @@ capped at 15 FPS by configuration.
 | Classical baseline | 22.0 ms |
 | 3-way render + JPEG encode | 61.5 ms (on its own thread) |
 
-Before a July 2026 profiling pass, the same demo ran at 7.66 FPS with 127.5 ms
-latency. Four changes closed the gap: locking the Jetson's GPU clocks, running
-model inference on the GPU while the classical baseline runs on the CPU, moving
-render/encode to a dedicated thread, and keeping the model's 5-frame input
-window on the GPU so only the newest frame is uploaded each tick. With the cap
-removed, inference sustains ~30 FPS — and the sensor delivers 60 FPS at 720p,
-so faster configurations have headroom.
-
-This is a live-demo snapshot from the hardware-specific companion runtime, not
-a model-only max-FPS benchmark. Latencies vary with scene content, and the
-processing latency excludes capture-buffer age (the sensor runs at 60 FPS, so
-a frame may be buffered briefly before the 15 FPS loop picks it up).
+A live-demo snapshot, not a model benchmark; latencies vary with scene content
+and exclude capture-buffer age.
 
 For managed Orin deployments, build the runtime image from
 [`docker/Dockerfile.orin`](docker/Dockerfile.orin) and publish it as an
