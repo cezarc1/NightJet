@@ -96,23 +96,31 @@ uv run nightjet enhance \
 
 ### Reference Orin Snapshot
 
-On July 5, 2026, the live KubeJet `EdgeVisionPipeline` on the local Jetson Orin
-Nano reported the following `/metrics` sample for a `1280x720` UYVY camera path
-at a requested 30 FPS capture rate. The runtime used the TensorRT temporal
-backend in a 3-way MJPEG demo view with `--stream-fps 15` and JPEG quality 82.
+On July 6, 2026, the live KubeJet `EdgeVisionPipeline` on the local Jetson Orin
+Nano reported the following `/metrics` sample for a `1280x720` UYVY camera path.
+The runtime used the TensorRT temporal backend in a 3-way MJPEG demo view with
+`--stream-fps 15` and JPEG quality 82.
 
-| Runtime metric | Observed value |
-| --- | --- |
-| Recent stream-loop FPS | 7.66 FPS |
-| Frame capture latency | 2.0 ms |
-| NightJet TensorRT model latency | 44.7 ms |
-| Classical baseline latency | 30.3 ms |
-| Render + JPEG encode latency | 49.1 ms |
-| Full stream-loop latency | 127.5 ms |
+| Runtime metric | Observed value | (July 5 baseline) |
+| --- | --- | --- |
+| Stream FPS (inference / render) | 15.0 / 15.0 FPS, 0 drops | 7.66 FPS |
+| Frame capture latency | 2.0 ms | 2.0 ms |
+| NightJet TensorRT model latency (CPU-visible) | 2.1 ms | 44.7 ms |
+| Classical baseline latency | 22.0 ms | 30.3 ms |
+| Render + JPEG encode latency | 61.5 ms | 49.1 ms |
+| End-to-end displayed-frame latency | 89.5 ms | 127.5 ms |
+
+The runtime saturates its configured 15 FPS stream cap after a profiling-driven
+overhaul: GPU clocks locked (Jetson DVFS never ramps under bursty serial loads),
+model inference submitted asynchronously and overlapped with the classical
+baseline on the CPU, render/JPEG on a dedicated thread behind a latest-wins
+handoff, and the temporal window kept resident on-GPU (~0.9 MB uploaded per
+frame instead of ~18 MB). Model latency is reported as CPU-visible cost; the
+GPU compute (~16 ms) is hidden under the classical stage. Uncapped, the
+inference side sustains ~30 FPS against a sensor that delivers 60 FPS at 720p.
 
 This is an end-to-end live-demo snapshot, not a model-only max-FPS benchmark.
-The measured FPS is lower than the 15 FPS stream cap because the path includes
-model inference, a classical baseline, 3-way rendering, and JPEG encoding.
+Latencies are scene-dependent (classical and JPEG cost vary with content).
 
 For managed Orin deployments, build the runtime image from
 [`docker/Dockerfile.orin`](docker/Dockerfile.orin) and publish it as an
