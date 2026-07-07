@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -8,8 +9,10 @@ import imageio.v2 as imageio
 import numpy as np
 import torch
 from PIL import Image
+from tqdm import tqdm
 
 from nightjet.config import ModelConfig
+from nightjet.devices import resolve_device
 from nightjet.models import NightJetEdgeV1
 
 DEFAULT_WEIGHTS_PATH = Path("weights/nightjet-edge-v1.pt")
@@ -30,13 +33,13 @@ class NightJetEnhancer:
         self.device = device
         self.metadata = metadata or {}
         self.model_config = model.config
-        self._luma_history: deque[np.ndarray] = deque(maxlen=self.model_config.input_frames)
+        self._luma_history: deque[torch.Tensor] = deque(maxlen=self.model_config.input_frames)
 
     @classmethod
     def from_checkpoint(
         cls, checkpoint_path: Path, *, device: str | None = None
     ) -> NightJetEnhancer:
-        torch_device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        torch_device = resolve_device(device)
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         model_config = ModelConfig.model_validate(checkpoint["model_config"])
         model = NightJetEdgeV1(model_config)
@@ -92,6 +95,7 @@ class NightJetEnhancer:
         side_by_side: bool = False,
         preserve_color: bool = False,
         fps: float | None = None,
+        show_progress: bool = True,
     ) -> Path:
         self.reset()
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -99,6 +103,13 @@ class NightJetEnhancer:
         metadata = reader.get_meta_data()
         output_fps = fps or float(metadata.get("fps") or 30.0)
         writer = imageio.get_writer(output_path, fps=output_fps, macro_block_size=1)
+        # disable=None lets tqdm hide the bar when stderr is not a TTY.
+        progress = tqdm(
+            total=_estimate_frame_count(metadata),
+            desc=input_path.name,
+            unit="frame",
+            disable=None if show_progress else True,
+        )
         try:
             index = 0
             while True:
@@ -106,37 +117,68 @@ class NightJetEnhancer:
                     frame = reader.get_data(index)
                 except IndexError:
                     break
-                rgb_image = _load_rgb_image(frame)
                 enhanced_rgb = self._enhance_video_frame(
-                    rgb_image,
+                    _coerce_rgb_array(frame),
                     side_by_side=side_by_side,
                     preserve_color=preserve_color,
                 )
                 writer.append_data(enhanced_rgb)
+                progress.update(1)
                 index += 1
         finally:
+            progress.close()
             writer.close()
             reader.close()
         return output_path
 
     def _enhance_video_frame(
         self,
-        rgb_image: Image.Image,
+        rgb: np.ndarray,
         *,
         side_by_side: bool,
         preserve_color: bool,
     ) -> np.ndarray:
-        luma = _rgb_to_luma(rgb_image)
-        self._luma_history.append(luma)
-        enhanced_luma = self.enhance_window(np.stack(tuple(self._luma_history), axis=0))
-        enhanced_rgb = _compose_rgb(rgb_image, enhanced_luma, preserve_color=preserve_color)
+        luma = _rgb_to_luma_array(rgb)
+        with torch.inference_mode():
+            self._luma_history.append(torch.from_numpy(luma).to(self.device))
+        enhanced_luma = self._enhance_history_window()
+        if preserve_color:
+            enhanced_rgb = _compose_rgb(Image.fromarray(rgb), enhanced_luma, preserve_color=True)
+        else:
+            y = _to_uint8(enhanced_luma)
+            enhanced_rgb = np.stack([y, y, y], axis=-1)
         if side_by_side:
-            return np.concatenate([np.asarray(rgb_image, dtype=np.uint8), enhanced_rgb], axis=1)
+            return np.concatenate([rgb, enhanced_rgb], axis=1)
         return enhanced_rgb
+
+    def _enhance_history_window(self) -> np.ndarray:
+        with torch.inference_mode():
+            frames = torch.stack(tuple(self._luma_history), dim=0)
+            pad_count = self.model_config.input_frames - frames.shape[0]
+            if pad_count > 0:
+                frames = torch.cat([frames[:1].expand(pad_count, -1, -1), frames], dim=0)
+            enhanced = self.model(frames.unsqueeze(0)).squeeze(0).squeeze(0)
+            result = enhanced.cpu().numpy()
+        return np.clip(result.astype(np.float32, copy=False), 0.0, 1.0)
 
 
 def is_video_path(path: Path) -> bool:
     return path.suffix.lower() in VIDEO_SUFFIXES
+
+
+def _estimate_frame_count(metadata: dict[str, Any]) -> int | None:
+    # ffmpeg readers often report nframes=inf; fall back to duration * fps.
+    nframes = metadata.get("nframes")
+    if isinstance(nframes, int | float) and math.isfinite(nframes) and nframes > 0:
+        return int(nframes)
+    fps = metadata.get("fps")
+    duration = metadata.get("duration")
+    if not isinstance(fps, int | float) or not isinstance(duration, int | float):
+        return None
+    if not (math.isfinite(fps) and math.isfinite(duration)):
+        return None
+    estimate = round(float(fps) * float(duration))
+    return estimate if estimate > 0 else None
 
 
 def _checkpoint_state_dict(checkpoint: dict[str, Any]) -> dict[str, torch.Tensor]:
@@ -187,6 +229,26 @@ def _pad_or_trim_window(window: np.ndarray, input_frames: int) -> np.ndarray:
 def _rgb_to_luma(image: Image.Image) -> np.ndarray:
     y_channel = image.convert("YCbCr").split()[0]
     return np.asarray(y_channel, dtype=np.float32) / 255.0
+
+
+# ITU-R BT.601 full-range luma weights, matching PIL's YCbCr Y channel.
+_BT601_LUMA_WEIGHTS = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+
+
+def _coerce_rgb_array(frame: np.ndarray) -> np.ndarray:
+    array = np.asarray(frame)
+    if array.ndim == 2:
+        gray = _to_uint8(array)
+        return np.stack([gray, gray, gray], axis=-1)
+    if array.ndim == 3 and array.shape[2] in {3, 4}:
+        return _to_uint8(array[..., :3])
+    raise ValueError(f"expected image array with shape HxW, HxWx3, or HxWx4; got {array.shape}")
+
+
+def _rgb_to_luma_array(rgb: np.ndarray) -> np.ndarray:
+    # Round to the uint8 grid so values match PIL's quantized Y channel.
+    luma = np.rint(rgb.astype(np.float32) @ _BT601_LUMA_WEIGHTS)
+    return luma.astype(np.float32, copy=False) / 255.0
 
 
 def _compose_rgb(
