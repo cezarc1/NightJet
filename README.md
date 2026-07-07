@@ -103,7 +103,7 @@ over MJPEG, capped at 15 FPS by configuration.
 | Runtime metric | Observed value |
 | --- | --- |
 | Displayed stream rate | **15.0 FPS** — the configured cap, fully saturated |
-| End-to-end latency (camera capture → encoded JPEG) | 89.5 ms |
+| Processing latency (frame read → encoded JPEG) | 89.5 ms |
 | Model GPU compute per frame | ~16 ms, run in parallel with CPU work |
 | Model cost added to the frame time | 2.1 ms |
 | Classical baseline | 22.0 ms |
@@ -117,8 +117,10 @@ window on the GPU so only the newest frame is uploaded each tick. With the cap
 removed, inference sustains ~30 FPS — and the sensor delivers 60 FPS at 720p,
 so faster configurations have headroom.
 
-This is an end-to-end live-demo snapshot from the hardware-specific companion
-runtime, not a model-only max-FPS benchmark. Latencies vary with scene content.
+This is a live-demo snapshot from the hardware-specific companion runtime, not
+a model-only max-FPS benchmark. Latencies vary with scene content, and the
+processing latency excludes capture-buffer age (the sensor runs at 60 FPS, so
+a frame may be buffered briefly before the 15 FPS loop picks it up).
 
 For managed Orin deployments, build the runtime image from
 [`docker/Dockerfile.orin`](docker/Dockerfile.orin) and publish it as an
