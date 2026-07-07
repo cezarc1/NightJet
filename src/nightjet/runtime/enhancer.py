@@ -6,8 +6,9 @@ from typing import Any
 import imageio.v2 as imageio
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 
-from nightjet.inference import _compose_rgb, _load_rgb_image
+from nightjet.inference import _compose_rgb, _estimate_frame_count, _load_rgb_image
 from nightjet.runtime.tensorrt import TensorRTLumaEnhancer, TensorRTLumaWindowEnhancer
 from nightjet.runtime.tensors import U8Frame
 
@@ -72,6 +73,7 @@ class TensorRTNightJetEnhancer:
         side_by_side: bool = False,
         preserve_color: bool = False,
         fps: float | None = None,
+        show_progress: bool = True,
     ) -> Path:
         self.reset()
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,6 +81,13 @@ class TensorRTNightJetEnhancer:
         metadata = reader.get_meta_data()
         output_fps = fps or float(metadata.get("fps") or 30.0)
         writer = imageio.get_writer(output_path, fps=output_fps, macro_block_size=1)
+        # disable=None lets tqdm hide the bar when stderr is not a TTY.
+        progress = tqdm(
+            total=_estimate_frame_count(metadata),
+            desc=input_path.name,
+            unit="frame",
+            disable=None if show_progress else True,
+        )
         try:
             index = 0
             while True:
@@ -94,8 +103,10 @@ class TensorRTNightJetEnhancer:
                         [np.asarray(rgb_image, dtype=np.uint8), enhanced_rgb], axis=1
                     )
                 writer.append_data(enhanced_rgb)
+                progress.update(1)
                 index += 1
         finally:
+            progress.close()
             writer.close()
             reader.close()
         return output_path

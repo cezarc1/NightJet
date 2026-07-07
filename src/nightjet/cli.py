@@ -96,6 +96,7 @@ def enhance(
     side_by_side: Annotated[bool, typer.Option("--side-by-side")] = False,
     preserve_color: Annotated[bool, typer.Option("--preserve-color")] = False,
     fps: Annotated[float | None, typer.Option()] = None,
+    progress: Annotated[bool, typer.Option("--progress/--no-progress")] = True,
 ) -> None:
     if weights is not None and engine is not None:
         raise typer.BadParameter("--weights and --engine are mutually exclusive")
@@ -108,6 +109,7 @@ def enhance(
                 side_by_side=side_by_side,
                 preserve_color=preserve_color,
                 fps=fps,
+                show_progress=progress,
             )
         else:
             enhancer.enhance_image(
@@ -129,6 +131,7 @@ def enhance(
             side_by_side=side_by_side,
             preserve_color=preserve_color,
             fps=fps,
+            show_progress=progress,
         )
     else:
         enhancer.enhance_image(

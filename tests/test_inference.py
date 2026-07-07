@@ -2,12 +2,19 @@ from pathlib import Path
 
 import imageio.v2 as imageio
 import numpy as np
+import pytest
 import torch
 from imageio.typing import ArrayLike
 from PIL import Image
 
 from nightjet.config import ModelConfig
-from nightjet.inference import NightJetEnhancer
+from nightjet.inference import (
+    NightJetEnhancer,
+    _estimate_frame_count,
+    _rgb_to_luma,
+    _rgb_to_luma_array,
+    _to_uint8,
+)
 from nightjet.models import NightJetEdgeV1
 
 
@@ -73,6 +80,94 @@ def test_enhance_video_writes_rgb_frames(tmp_path: Path) -> None:
     output_frames = imageio.mimread(output_path)
     assert len(output_frames) == 3
     assert np.asarray(output_frames[0]).shape[-1] == 3
+
+
+def test_enhance_video_accepts_show_progress_flag(tmp_path: Path) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
+    input_path = tmp_path / "input.mp4"
+    output_path = tmp_path / "output.mp4"
+    frames: list[ArrayLike] = [
+        np.full((16, 16, 3), value, dtype=np.uint8) for value in (20, 80, 140)
+    ]
+    imageio.mimsave(input_path, frames, fps=5, macro_block_size=1)
+    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
+
+    enhancer.enhance_video(input_path, output_path, show_progress=False)
+
+    assert output_path.exists()
+    assert len(imageio.mimread(output_path)) == 3
+
+
+def test_enhance_video_preserve_color_and_side_by_side(tmp_path: Path) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
+    input_path = tmp_path / "input.mp4"
+    pixels = np.zeros((16, 16, 3), dtype=np.uint8)
+    pixels[:, :8] = np.array([180, 30, 45], dtype=np.uint8)
+    pixels[:, 8:] = np.array([20, 160, 90], dtype=np.uint8)
+    frames: list[ArrayLike] = [pixels] * 3
+    imageio.mimsave(input_path, frames, fps=5, macro_block_size=1)
+    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
+
+    color_path = tmp_path / "color.mp4"
+    enhancer.enhance_video(input_path, color_path, preserve_color=True)
+    color_frame = np.asarray(imageio.mimread(color_path)[0])
+    assert not np.array_equal(color_frame[..., 0], color_frame[..., 1])
+
+    comparison_path = tmp_path / "comparison.mp4"
+    enhancer.enhance_video(input_path, comparison_path, side_by_side=True)
+    comparison_frame = np.asarray(imageio.mimread(comparison_path)[0])
+    assert comparison_frame.shape[1] == 32
+
+
+def test_streaming_window_matches_enhance_window(tmp_path: Path) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
+    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
+    rng = np.random.default_rng(7)
+    history: list[np.ndarray] = []
+    for _ in range(4):
+        rgb = rng.integers(0, 256, size=(6, 8, 3), dtype=np.uint8)
+        history.append(_rgb_to_luma_array(rgb))
+
+        streamed = enhancer._enhance_video_frame(rgb, side_by_side=False, preserve_color=False)
+
+        reference_luma = enhancer.enhance_window(np.stack(history, axis=0))
+        expected = np.stack([_to_uint8(reference_luma)] * 3, axis=-1)
+        delta = np.abs(streamed.astype(np.int16) - expected.astype(np.int16))
+        assert int(delta.max()) <= 1
+
+
+def test_rgb_to_luma_array_matches_pil() -> None:
+    rng = np.random.default_rng(3)
+    rgb = rng.integers(0, 256, size=(16, 16, 3), dtype=np.uint8)
+
+    pil_luma = _rgb_to_luma(Image.fromarray(rgb))
+    array_luma = _rgb_to_luma_array(rgb)
+
+    assert array_luma.dtype == np.float32
+    assert float(np.max(np.abs(pil_luma - array_luma))) <= 1.0 / 255.0 + 1e-6
+
+
+def test_estimate_frame_count() -> None:
+    assert _estimate_frame_count({"fps": 5.0, "duration": 2.0}) == 10
+    assert _estimate_frame_count({"nframes": 42, "fps": 5.0, "duration": 2.0}) == 42
+    assert _estimate_frame_count({"nframes": float("inf"), "fps": 5.0, "duration": 2.0}) == 10
+    assert _estimate_frame_count({"fps": 5.0}) is None
+    assert _estimate_frame_count({"fps": 5.0, "duration": float("inf")}) is None
+    assert _estimate_frame_count({}) is None
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS not available")
+def test_enhance_window_mps_matches_cpu(tmp_path: Path) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
+    cpu_enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
+    mps_enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="mps")
+    window = np.random.default_rng(5).random((3, 6, 8), dtype=np.float32)
+
+    assert np.allclose(
+        cpu_enhancer.enhance_window(window),
+        mps_enhancer.enhance_window(window),
+        atol=1e-4,
+    )
 
 
 def _write_identity_checkpoint(tmp_path: Path, *, input_frames: int) -> Path:
