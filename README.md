@@ -94,11 +94,29 @@ uv run nightjet enhance \
   --engine outputs/nightjet-edge-v1-fp16.plan
 ```
 
+### Benchmark: Jetson Orin Nano Super
+
+The default `nightjet-edge-v1` engine, built exactly as above from the committed
+ONNX, measured on a Jetson Orin Nano Super Developer Kit (JetPack 6 / L4T R36.5,
+TensorRT 10.11, FP16, MAXN_SUPER with locked clocks, batch 1, 1280x720 five-frame
+luma window, `trtexec` sustained load, 300 iterations):
+
+| Metric | nightjet-edge-v1 @ 720p |
+| --- | --- |
+| Throughput | **82.9 inferences/sec** |
+| GPU compute per frame | 12.0 ms |
+| Host→device / device→host transfer | 0.84 ms / 0.25 ms |
+| End-to-end engine latency | 13.1 ms |
+
+At 12 ms per frame the model fits comfortably inside a 60 FPS frame budget
+(16.7 ms), so on this device the practical ceiling is the camera, not the model.
+
 ### Reference Orin Snapshot
 
-Live demo on a Jetson Orin Nano (July 6, 2026): a 1280x720 camera feed enhanced
-in real time and served as a 3-way comparison stream (raw / classical / NightJet)
-over MJPEG, capped at 15 FPS by configuration.
+Live demo on the same device (July 6, 2026), running a heavier companion model
+inside a full camera pipeline: a 1280x720 camera feed enhanced in real time and
+served as a 3-way comparison stream (raw / classical / model) over MJPEG,
+capped at 15 FPS by configuration.
 
 | Runtime metric | Observed value |
 | --- | --- |
