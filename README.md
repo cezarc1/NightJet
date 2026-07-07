@@ -96,31 +96,29 @@ uv run nightjet enhance \
 
 ### Reference Orin Snapshot
 
-On July 6, 2026, the live KubeJet `EdgeVisionPipeline` on the local Jetson Orin
-Nano reported the following `/metrics` sample for a `1280x720` UYVY camera path.
-The runtime used the TensorRT temporal backend in a 3-way MJPEG demo view with
-`--stream-fps 15` and JPEG quality 82.
+Live demo on a Jetson Orin Nano (July 6, 2026): a 1280x720 camera feed enhanced
+in real time and served as a 3-way comparison stream (raw / classical / NightJet)
+over MJPEG, capped at 15 FPS by configuration.
 
-| Runtime metric | Observed value | (July 5 baseline) |
-| --- | --- | --- |
-| Stream FPS (inference / render) | 15.0 / 15.0 FPS, 0 drops | 7.66 FPS |
-| Frame capture latency | 2.0 ms | 2.0 ms |
-| NightJet TensorRT model latency (CPU-visible) | 2.1 ms | 44.7 ms |
-| Classical baseline latency | 22.0 ms | 30.3 ms |
-| Render + JPEG encode latency | 61.5 ms | 49.1 ms |
-| End-to-end displayed-frame latency | 89.5 ms | 127.5 ms |
+| Runtime metric | Observed value |
+| --- | --- |
+| Displayed stream rate | **15.0 FPS** — the configured cap, fully saturated |
+| End-to-end latency (camera capture → encoded JPEG) | 89.5 ms |
+| Model GPU compute per frame | ~16 ms, run in parallel with CPU work |
+| Model cost added to the frame time | 2.1 ms |
+| Classical baseline | 22.0 ms |
+| 3-way render + JPEG encode | 61.5 ms (on its own thread) |
 
-The runtime saturates its configured 15 FPS stream cap after a profiling-driven
-overhaul: GPU clocks locked (Jetson DVFS never ramps under bursty serial loads),
-model inference submitted asynchronously and overlapped with the classical
-baseline on the CPU, render/JPEG on a dedicated thread behind a latest-wins
-handoff, and the temporal window kept resident on-GPU (~0.9 MB uploaded per
-frame instead of ~18 MB). Model latency is reported as CPU-visible cost; the
-GPU compute (~16 ms) is hidden under the classical stage. Uncapped, the
-inference side sustains ~30 FPS against a sensor that delivers 60 FPS at 720p.
+Before a July 2026 profiling pass, the same demo ran at 7.66 FPS with 127.5 ms
+latency. Four changes closed the gap: locking the Jetson's GPU clocks, running
+model inference on the GPU while the classical baseline runs on the CPU, moving
+render/encode to a dedicated thread, and keeping the model's 5-frame input
+window on the GPU so only the newest frame is uploaded each tick. With the cap
+removed, inference sustains ~30 FPS — and the sensor delivers 60 FPS at 720p,
+so faster configurations have headroom.
 
-This is an end-to-end live-demo snapshot, not a model-only max-FPS benchmark.
-Latencies are scene-dependent (classical and JPEG cost vary with content).
+This is an end-to-end live-demo snapshot from the hardware-specific companion
+runtime, not a model-only max-FPS benchmark. Latencies vary with scene content.
 
 For managed Orin deployments, build the runtime image from
 [`docker/Dockerfile.orin`](docker/Dockerfile.orin) and publish it as an
