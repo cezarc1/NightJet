@@ -87,7 +87,6 @@ class TensorRTNightJetEnhancer:
         metadata = reader.get_meta_data()
         output_fps = fps or float(metadata.get("fps") or 30.0)
         writer = imageio.get_writer(output_path, fps=output_fps, macro_block_size=1)
-        # disable=None lets tqdm hide the bar when stderr is not a TTY.
         progress = tqdm(
             total=_estimate_frame_count(metadata),
             desc=input_path.name,

@@ -19,8 +19,7 @@ from nightjet.models import NightJetEdgeV1
 
 DEFAULT_WEIGHTS_PATH = Path("weights/nightjet-edge-v1.pt")
 VIDEO_SUFFIXES = {".avi", ".gif", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}
-# Max cumulative inter-frame motion (mean abs block-luma delta) allowed inside
-# the temporal window; frames beyond it are stale enough to ghost during pans.
+# Cumulative inter-frame motion (mean abs block-luma delta) tolerated inside the window.
 DEFAULT_MOTION_BUDGET = 0.045
 
 
@@ -113,7 +112,6 @@ class NightJetEnhancer:
         metadata = reader.get_meta_data()
         output_fps = fps or float(metadata.get("fps") or 30.0)
         writer = imageio.get_writer(output_path, fps=output_fps, macro_block_size=1)
-        # disable=None lets tqdm hide the bar when stderr is not a TTY.
         progress = tqdm(
             total=_estimate_frame_count(metadata),
             desc=input_path.name,
@@ -161,11 +159,6 @@ class NightJetEnhancer:
         return enhanced_rgb
 
     def _effective_history(self) -> list[torch.Tensor]:
-        """Longest recent suffix of the window whose cumulative motion fits the budget.
-
-        Frames displaced too far from the current one (fast pans) would ghost;
-        dropping them makes padding repeat a recent frame instead.
-        """
         keep = _motion_window_size(tuple(self._motion_history), self.motion_budget)
         return list(self._luma_history)[-keep:]
 
@@ -175,10 +168,8 @@ class NightJetEnhancer:
         if pad_count > 0:
             history = [history[0]] * pad_count + history
         with torch.inference_mode():
-            frames = torch.stack(history, dim=0)
-            enhanced = self.model(frames.unsqueeze(0)).squeeze(0).squeeze(0)
-            result = enhanced.cpu().numpy()
-        return np.clip(result.astype(np.float32, copy=False), 0.0, 1.0)
+            enhanced = self.model(torch.stack(history, dim=0).unsqueeze(0)).squeeze(0).squeeze(0)
+        return np.clip(enhanced.cpu().numpy().astype(np.float32, copy=False), 0.0, 1.0)
 
 
 def is_video_path(path: Path) -> bool:
@@ -187,21 +178,16 @@ def is_video_path(path: Path) -> bool:
 
 def _open_video_reader(path: Path) -> Any:
     if path.suffix.lower() == ".gif":
-        # imageio's FFMPEG plugin refuses gif uris; the Pillow reader has no
-        # VFR duplication issue but signals end-of-stream with EOFError.
         return imageio.get_reader(path)
-    # -vsync 0 (passthrough): decode each real frame once instead of
-    # CFR-duplicating VFR sources at the container timebase.
+    # -vsync 0: decode VFR sources without CFR frame duplication.
     return imageio.get_reader(
         path,
-        format="FFMPEG",  # ty: ignore[invalid-argument-type] -- stub wants Format, runtime accepts names
+        format="FFMPEG",  # ty: ignore[invalid-argument-type]
         output_params=["-vsync", "0"],
     )
 
 
 def _iter_video_frames(reader: Any) -> Iterator[Any]:
-    # FFMPEG readers signal end-of-stream with IndexError, Pillow gif readers
-    # with EOFError; own that protocol here next to _open_video_reader.
     index = 0
     while True:
         try:
@@ -224,7 +210,6 @@ def _motion_window_size(motions: Sequence[float], budget: float) -> int:
 
 
 def _estimate_frame_count(metadata: dict[str, Any]) -> int | None:
-    # ffmpeg readers often report nframes=inf; fall back to duration * fps.
     nframes = metadata.get("nframes")
     if isinstance(nframes, int | float) and math.isfinite(nframes) and nframes > 0:
         return int(nframes)
@@ -288,7 +273,7 @@ def _rgb_to_luma(image: Image.Image) -> np.ndarray:
     return np.asarray(y_channel, dtype=np.float32) / 255.0
 
 
-# ITU-R BT.601 full-range luma weights, matching PIL's YCbCr Y channel.
+# ITU-R BT.601 luma weights; results round to the uint8 grid to match PIL's Y channel.
 _BT601_LUMA_WEIGHTS = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 
 
@@ -303,14 +288,10 @@ def _coerce_rgb_array(frame: np.ndarray) -> np.ndarray:
 
 
 def _rgb_to_luma_array(rgb: np.ndarray) -> np.ndarray:
-    # Round to the uint8 grid so values match PIL's quantized Y channel.
-    luma = np.rint(rgb.astype(np.float32) @ _BT601_LUMA_WEIGHTS)
-    return luma.astype(np.float32, copy=False) / 255.0
+    return np.rint(rgb.astype(np.float32) @ _BT601_LUMA_WEIGHTS) / 255.0
 
 
 def _block_mean_luma(luma: np.ndarray, block: int = 8) -> np.ndarray:
-    # Block averaging suppresses sensor noise so motion estimates track scene
-    # motion rather than ISO grain.
     blocks_h, blocks_w = luma.shape[0] // block, luma.shape[1] // block
     if blocks_h == 0 or blocks_w == 0:
         return luma
