@@ -68,10 +68,7 @@ def test_enhance_video_writes_rgb_frames(tmp_path: Path) -> None:
     checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
     input_path = tmp_path / "input.mp4"
     output_path = tmp_path / "output.mp4"
-    frames: list[ArrayLike] = [
-        np.full((16, 16, 3), value, dtype=np.uint8) for value in (20, 80, 140)
-    ]
-    imageio.mimsave(input_path, frames, fps=5, macro_block_size=1)
+    _write_gray_video(input_path, fps=5, macro_block_size=1)
     enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
 
     returned = enhancer.enhance_video(input_path, output_path)
@@ -87,10 +84,7 @@ def test_enhance_video_accepts_show_progress_flag(tmp_path: Path) -> None:
     checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
     input_path = tmp_path / "input.mp4"
     output_path = tmp_path / "output.mp4"
-    frames: list[ArrayLike] = [
-        np.full((16, 16, 3), value, dtype=np.uint8) for value in (20, 80, 140)
-    ]
-    imageio.mimsave(input_path, frames, fps=5, macro_block_size=1)
+    _write_gray_video(input_path, fps=5, macro_block_size=1)
     enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
 
     enhancer.enhance_video(input_path, output_path, show_progress=False)
@@ -105,36 +99,30 @@ def test_enhance_video_decodes_with_passthrough(
     checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
     input_path = tmp_path / "input.mp4"
     output_path = tmp_path / "output.mp4"
-    frames: list[ArrayLike] = [
-        np.full((16, 16, 3), value, dtype=np.uint8) for value in (20, 80, 140)
-    ]
-    imageio.mimsave(input_path, frames, fps=5, macro_block_size=1)
+    _write_gray_video(input_path, fps=5, macro_block_size=1)
     enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
 
     real_get_reader = imageio.get_reader
-    reader_calls: list[dict] = []
+    reader_kwargs: list[dict[str, Any]] = []
 
     def spy_get_reader(uri: Any, *args: Any, **kwargs: Any) -> Any:
-        reader_calls.append({"uri": uri, "args": args, "kwargs": kwargs})
+        reader_kwargs.append(kwargs)
         return real_get_reader(uri, *args, **kwargs)
 
     monkeypatch.setattr("nightjet.inference.imageio.get_reader", spy_get_reader)
     enhancer.enhance_video(input_path, output_path)
 
     assert len(imageio.mimread(output_path)) == 3
-    (call,) = reader_calls
-    assert call["kwargs"]["format"] == "FFMPEG"
-    assert call["kwargs"]["output_params"] == ["-vsync", "0"]
+    (kwargs,) = reader_kwargs
+    assert kwargs["format"] == "FFMPEG"
+    assert kwargs["output_params"] == ["-vsync", "0"]
 
 
 def test_enhance_video_reads_gif_input(tmp_path: Path) -> None:
     checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
     input_path = tmp_path / "input.gif"
     output_path = tmp_path / "output.mp4"
-    frames: list[ArrayLike] = [
-        np.full((16, 16, 3), value, dtype=np.uint8) for value in (20, 80, 140)
-    ]
-    imageio.mimsave(input_path, frames)
+    _write_gray_video(input_path)
     enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
 
     enhancer.enhance_video(input_path, output_path)
@@ -187,7 +175,7 @@ def test_effective_history_shrinks_under_motion_budget(tmp_path: Path) -> None:
     enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
     tensors = [torch.full((4, 4), float(i)) for i in range(5)]
     enhancer._luma_history.extend(tensors)
-    enhancer._motion_history.extend([0.0, 0.001, 0.001, 0.05, 0.001])
+    enhancer._motion_history.extend([0.001, 0.001, 0.05, 0.001])
 
     effective = enhancer._effective_history()
 
@@ -244,6 +232,13 @@ def test_enhance_window_mps_matches_cpu(tmp_path: Path) -> None:
         mps_enhancer.enhance_window(window),
         atol=1e-4,
     )
+
+
+def _write_gray_video(path: Path, **save_kwargs: Any) -> None:
+    frames: list[ArrayLike] = [
+        np.full((16, 16, 3), value, dtype=np.uint8) for value in (20, 80, 140)
+    ]
+    imageio.mimsave(path, frames, **save_kwargs)
 
 
 def _write_identity_checkpoint(tmp_path: Path, *, input_frames: int) -> Path:

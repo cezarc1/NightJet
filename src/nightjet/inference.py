@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from tqdm import tqdm
 
 from nightjet.config import ModelConfig
 from nightjet.devices import resolve_device
+from nightjet.metrics import mae
 from nightjet.models import NightJetEdgeV1
 
 DEFAULT_WEIGHTS_PATH = Path("weights/nightjet-edge-v1.pt")
@@ -30,16 +32,15 @@ class NightJetEnhancer:
         checkpoint_path: Path,
         device: torch.device,
         metadata: dict[str, Any] | None = None,
-        motion_budget: float = DEFAULT_MOTION_BUDGET,
     ) -> None:
         self.model = model
         self.checkpoint_path = checkpoint_path
         self.device = device
         self.metadata = metadata or {}
         self.model_config = model.config
-        self.motion_budget = motion_budget
+        self.motion_budget = DEFAULT_MOTION_BUDGET
         self._luma_history: deque[torch.Tensor] = deque(maxlen=self.model_config.input_frames)
-        self._motion_history: deque[float] = deque(maxlen=self.model_config.input_frames)
+        self._motion_history: deque[float] = deque(maxlen=self.model_config.input_frames - 1)
         self._last_block_luma: np.ndarray | None = None
 
     @classmethod
@@ -120,12 +121,7 @@ class NightJetEnhancer:
             disable=None if show_progress else True,
         )
         try:
-            index = 0
-            while True:
-                try:
-                    frame = reader.get_data(index)
-                except (EOFError, IndexError):
-                    break
+            for frame in _iter_video_frames(reader):
                 enhanced_rgb = self._enhance_video_frame(
                     _coerce_rgb_array(frame),
                     side_by_side=side_by_side,
@@ -133,7 +129,6 @@ class NightJetEnhancer:
                 )
                 writer.append_data(enhanced_rgb)
                 progress.update(1)
-                index += 1
         finally:
             progress.close()
             writer.close()
@@ -148,13 +143,11 @@ class NightJetEnhancer:
         preserve_color: bool,
     ) -> np.ndarray:
         luma = _rgb_to_luma_array(rgb)
-        block_luma = _block_mean_luma(luma)
-        if self._last_block_luma is None:
-            motion = 0.0
-        else:
-            motion = float(np.mean(np.abs(block_luma - self._last_block_luma)))
-        self._last_block_luma = block_luma
-        self._motion_history.append(motion)
+        if self.model_config.input_frames > 1:
+            block_luma = _block_mean_luma(luma)
+            if self._last_block_luma is not None:
+                self._motion_history.append(mae(block_luma, self._last_block_luma))
+            self._last_block_luma = block_luma
         with torch.inference_mode():
             self._luma_history.append(torch.from_numpy(luma).to(self.device))
         enhanced_luma = self._enhance_history_window()
@@ -173,23 +166,16 @@ class NightJetEnhancer:
         Frames displaced too far from the current one (fast pans) would ghost;
         dropping them makes padding repeat a recent frame instead.
         """
-        history = list(self._luma_history)
-        motions = list(self._motion_history)
-        keep = 1
-        cumulative = 0.0
-        for j in range(len(history) - 1, 0, -1):
-            cumulative += motions[j]
-            if cumulative > self.motion_budget:
-                break
-            keep += 1
-        return history[-keep:]
+        keep = _motion_window_size(tuple(self._motion_history), self.motion_budget)
+        return list(self._luma_history)[-keep:]
 
     def _enhance_history_window(self) -> np.ndarray:
+        history = self._effective_history()
+        pad_count = self.model_config.input_frames - len(history)
+        if pad_count > 0:
+            history = [history[0]] * pad_count + history
         with torch.inference_mode():
-            frames = torch.stack(self._effective_history(), dim=0)
-            pad_count = self.model_config.input_frames - frames.shape[0]
-            if pad_count > 0:
-                frames = torch.cat([frames[:1].expand(pad_count, -1, -1), frames], dim=0)
+            frames = torch.stack(history, dim=0)
             enhanced = self.model(frames.unsqueeze(0)).squeeze(0).squeeze(0)
             result = enhanced.cpu().numpy()
         return np.clip(result.astype(np.float32, copy=False), 0.0, 1.0)
@@ -211,6 +197,30 @@ def _open_video_reader(path: Path) -> Any:
         format="FFMPEG",  # ty: ignore[invalid-argument-type] -- stub wants Format, runtime accepts names
         output_params=["-vsync", "0"],
     )
+
+
+def _iter_video_frames(reader: Any) -> Iterator[Any]:
+    # FFMPEG readers signal end-of-stream with IndexError, Pillow gif readers
+    # with EOFError; own that protocol here next to _open_video_reader.
+    index = 0
+    while True:
+        try:
+            yield reader.get_data(index)
+        except (EOFError, IndexError):
+            return
+        index += 1
+
+
+def _motion_window_size(motions: Sequence[float], budget: float) -> int:
+    """Number of trailing window frames whose cumulative inter-frame motion fits the budget."""
+    keep = 1
+    cumulative = 0.0
+    for motion in reversed(motions):
+        cumulative += motion
+        if cumulative > budget:
+            break
+        keep += 1
+    return keep
 
 
 def _estimate_frame_count(metadata: dict[str, Any]) -> int | None:
@@ -301,11 +311,11 @@ def _rgb_to_luma_array(rgb: np.ndarray) -> np.ndarray:
 def _block_mean_luma(luma: np.ndarray, block: int = 8) -> np.ndarray:
     # Block averaging suppresses sensor noise so motion estimates track scene
     # motion rather than ISO grain.
-    height, width = luma.shape
-    if height < block or width < block:
+    blocks_h, blocks_w = luma.shape[0] // block, luma.shape[1] // block
+    if blocks_h == 0 or blocks_w == 0:
         return luma
-    trimmed = luma[: height // block * block, : width // block * block]
-    return trimmed.reshape(height // block, block, width // block, block).mean(axis=(1, 3))
+    trimmed = luma[: blocks_h * block, : blocks_w * block]
+    return trimmed.reshape(blocks_h, block, blocks_w, block).mean(axis=(1, 3))
 
 
 def _compose_rgb(

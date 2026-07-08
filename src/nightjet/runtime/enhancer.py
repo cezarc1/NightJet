@@ -11,6 +11,7 @@ from tqdm import tqdm
 from nightjet.inference import (
     _compose_rgb,
     _estimate_frame_count,
+    _iter_video_frames,
     _load_rgb_image,
     _open_video_reader,
 )
@@ -94,12 +95,7 @@ class TensorRTNightJetEnhancer:
             disable=None if show_progress else True,
         )
         try:
-            index = 0
-            while True:
-                try:
-                    frame = reader.get_data(index)
-                except (EOFError, IndexError):
-                    break
+            for frame in _iter_video_frames(reader):
                 rgb_image = _load_rgb_image(frame)
                 enhanced_luma = self.process_luma_u8(_rgb_to_luma_u8(rgb_image))
                 enhanced_rgb = _compose_rgb(rgb_image, enhanced_luma, preserve_color=preserve_color)
@@ -109,7 +105,6 @@ class TensorRTNightJetEnhancer:
                     )
                 writer.append_data(enhanced_rgb)
                 progress.update(1)
-                index += 1
         finally:
             progress.close()
             writer.close()
