@@ -1,7 +1,7 @@
 import subprocess
 from contextlib import closing
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import imageio.v2 as imageio
 import imageio_ffmpeg
@@ -11,8 +11,10 @@ import torch
 from imageio.typing import ArrayLike
 from PIL import Image
 
+import nightjet.inference as nightjet_inference
 from nightjet.config import ModelConfig
 from nightjet.inference import (
+    MODEL_INPUT_DTYPE,
     NightJetEnhancer,
     _estimate_frame_count,
     _iter_video_frames,
@@ -39,6 +41,15 @@ def test_enhance_window_pads_short_static_window(tmp_path: Path) -> None:
 
     assert enhanced.shape == (6, 8)
     assert np.allclose(enhanced, 0.40, atol=1e-6)
+
+
+def test_enhance_window_rejects_dtype_override(tmp_path: Path) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
+    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
+    window = np.zeros((3, 6, 8), dtype=np.float32)
+
+    with pytest.raises(TypeError):
+        cast(Any, enhancer.enhance_window)(window, dtype=torch.float16)
 
 
 def test_enhance_image_defaults_to_grayscale_rgb(tmp_path: Path) -> None:
@@ -213,6 +224,22 @@ def test_streaming_window_matches_enhance_window(tmp_path: Path) -> None:
         expected = np.stack([_to_uint8(reference_luma)] * 3, axis=-1)
         delta = np.abs(streamed.astype(np.int16) - expected.astype(np.int16))
         assert int(delta.max()) <= 1
+
+
+def test_streaming_video_frame_uses_model_input_dtype(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
+    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
+    rgb = np.full((6, 8, 3), 40, dtype=np.uint8)
+
+    def fake_luma_array(_rgb: np.ndarray) -> np.ndarray:
+        return np.zeros((6, 8), dtype=np.float64)
+
+    monkeypatch.setattr(nightjet_inference, "_rgb_to_luma_array", fake_luma_array)
+    enhancer._enhance_video_frame(rgb, side_by_side=False, preserve_color=False)
+
+    assert enhancer._luma_history[-1].dtype == MODEL_INPUT_DTYPE
 
 
 def test_effective_history_shrinks_under_motion_budget(tmp_path: Path) -> None:

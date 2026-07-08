@@ -20,6 +20,7 @@ from nightjet.models import NightJetEdgeV1
 
 DEFAULT_WEIGHTS_PATH = Path("weights/nightjet-edge-v1.pt")
 VIDEO_SUFFIXES = {".avi", ".gif", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}
+MODEL_INPUT_DTYPE = torch.float32
 # Cumulative inter-frame motion (mean abs block-luma delta) tolerated inside the window.
 DEFAULT_MOTION_BUDGET = 0.045
 
@@ -78,7 +79,7 @@ class NightJetEnhancer:
     def enhance_window(self, window: np.ndarray) -> np.ndarray:
         luma_window = _normalize_luma_window(window)
         luma_window = _pad_or_trim_window(luma_window, self.model_config.input_frames)
-        tensor = torch.from_numpy(luma_window).unsqueeze(0).to(self.device, dtype=torch.float32)
+        tensor = torch.from_numpy(luma_window).unsqueeze(0).to(self.device, dtype=MODEL_INPUT_DTYPE)
         with torch.inference_mode():
             enhanced = self.model(tensor).squeeze(0).squeeze(0).detach().cpu().numpy()
         return np.clip(enhanced.astype(np.float32, copy=False), 0.0, 1.0)
@@ -153,7 +154,9 @@ class NightJetEnhancer:
                 self._motion_history.append(mae(block_luma, self._last_block_luma))
             self._last_block_luma = block_luma
         with torch.inference_mode():
-            self._luma_history.append(torch.from_numpy(luma).to(self.device))
+            self._luma_history.append(
+                torch.from_numpy(luma).to(self.device, dtype=MODEL_INPUT_DTYPE)
+            )
         enhanced_luma = self._enhance_history_window()
         if preserve_color:
             enhanced_rgb = _compose_rgb(Image.fromarray(rgb), enhanced_luma, preserve_color=True)

@@ -17,7 +17,7 @@ from nightjet.inference import (
     _open_video_writer,
 )
 from nightjet.runtime.tensorrt import TensorRTLumaEnhancer, TensorRTLumaWindowEnhancer
-from nightjet.runtime.tensors import U8Frame
+from nightjet.runtime.tensors import U8_FRAME_DTYPE, U8Frame
 
 
 class TensorRTNightJetEnhancer:
@@ -44,7 +44,7 @@ class TensorRTNightJetEnhancer:
     def process_luma_u8(self, luma: U8Frame) -> U8Frame:
         process_next = getattr(self.engine, "process_next", None)
         if callable(process_next):
-            output, metrics = process_next(luma)
+            output, metrics = process_next(luma)  # type: ignore[operator]
         else:
             output, metrics = self.engine.process(luma)
         self.last_metrics = metrics
@@ -64,7 +64,7 @@ class TensorRTNightJetEnhancer:
         enhanced_rgb = _compose_rgb(rgb_image, enhanced_luma, preserve_color=preserve_color)
         if side_by_side:
             enhanced_rgb = np.concatenate(
-                [np.asarray(rgb_image, dtype=np.uint8), enhanced_rgb], axis=1
+                [np.asarray(rgb_image, dtype=U8_FRAME_DTYPE), enhanced_rgb], axis=1
             )
         result = Image.fromarray(enhanced_rgb)
         if output_path is not None:
@@ -105,7 +105,7 @@ class TensorRTNightJetEnhancer:
                     )
                     if side_by_side:
                         enhanced_rgb = np.concatenate(
-                            [np.asarray(rgb_image, dtype=np.uint8), enhanced_rgb], axis=1
+                            [np.asarray(rgb_image, dtype=U8_FRAME_DTYPE), enhanced_rgb], axis=1
                         )
                     writer.append_data(enhanced_rgb)
                     progress.update(1)
