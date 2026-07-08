@@ -76,6 +76,12 @@ The video path is causal: each output frame uses only the current frame and
 previous frames. At the start of a clip, NightJet pads the window with the first
 available frame.
 
+The PyTorch `--weights` video path decodes variable-frame-rate sources without
+duplicating frames. To reduce pan ghosting, it drops older frames from the
+temporal window when cumulative block-luma motion exceeds `0.045`. Tune that
+threshold with `--motion-budget`, or use `--disable-motion-budget` to keep the
+full causal window.
+
 Python examples are in [examples/enhance_image.py](examples/enhance_image.py)
 and [examples/enhance_video.py](examples/enhance_video.py).
 

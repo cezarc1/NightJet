@@ -32,20 +32,27 @@ class NightJetEnhancer:
         checkpoint_path: Path,
         device: torch.device,
         metadata: dict[str, Any] | None = None,
+        motion_budget: float | None = DEFAULT_MOTION_BUDGET,
     ) -> None:
+        if motion_budget is not None and motion_budget < 0:
+            raise ValueError("motion_budget must be non-negative or None")
         self.model = model
         self.checkpoint_path = checkpoint_path
         self.device = device
         self.metadata = metadata or {}
         self.model_config = model.config
-        self.motion_budget = DEFAULT_MOTION_BUDGET
+        self.motion_budget = motion_budget
         self._luma_history: deque[torch.Tensor] = deque(maxlen=self.model_config.input_frames)
         self._motion_history: deque[float] = deque(maxlen=self.model_config.input_frames - 1)
         self._last_block_luma: np.ndarray | None = None
 
     @classmethod
     def from_checkpoint(
-        cls, checkpoint_path: Path, *, device: str | None = None
+        cls,
+        checkpoint_path: Path,
+        *,
+        device: str | None = None,
+        motion_budget: float | None = DEFAULT_MOTION_BUDGET,
     ) -> NightJetEnhancer:
         torch_device = resolve_device(device)
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -60,6 +67,7 @@ class NightJetEnhancer:
             checkpoint_path=checkpoint_path,
             device=torch_device,
             metadata=checkpoint.get("metadata"),
+            motion_budget=motion_budget,
         )
 
     def reset(self) -> None:
@@ -109,7 +117,6 @@ class NightJetEnhancer:
     ) -> Path:
         self.reset()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        # closing() instead of bare with: imageio's __exit__ skips close() on exceptions.
         with closing(_open_video_reader(input_path)) as reader:
             metadata = reader.get_meta_data()
             output_fps = fps or float(metadata.get("fps") or 30.0)
@@ -158,6 +165,8 @@ class NightJetEnhancer:
         return enhanced_rgb
 
     def _effective_history(self) -> list[torch.Tensor]:
+        if self.motion_budget is None:
+            return list(self._luma_history)
         keep = _motion_window_size(tuple(self._motion_history), self.motion_budget)
         return list(self._luma_history)[-keep:]
 

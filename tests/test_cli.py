@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -275,6 +276,30 @@ def test_cli_enhance_can_route_to_tensorrt_engine(
     assert output_image.exists()
 
 
+def test_cli_enhance_passes_motion_budget_to_pytorch_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _run_fake_pytorch_video_enhance(
+        tmp_path,
+        monkeypatch,
+        extra_args=["--motion-budget", "0.12"],
+    )
+
+    assert seen["motion_budget"] == 0.12
+
+
+def test_cli_enhance_can_disable_motion_budget_for_pytorch_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _run_fake_pytorch_video_enhance(
+        tmp_path,
+        monkeypatch,
+        extra_args=["--disable-motion-budget"],
+    )
+
+    assert seen["motion_budget"] is None
+
+
 def test_cli_build_engine_dry_run_uses_exported_input_name(tmp_path: Path) -> None:
     runner = CliRunner()
     onnx = tmp_path / "nightjet.onnx"
@@ -304,6 +329,78 @@ def test_cli_build_engine_dry_run_uses_exported_input_name(tmp_path: Path) -> No
     assert "--minShapes=luma_window:1x5x32x64" not in command
     assert "--fp16" in command
     assert "--explicitBatch" not in command
+
+
+def _run_fake_pytorch_video_enhance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    extra_args: list[str],
+) -> dict[str, Any]:
+    runner = CliRunner()
+    input_video = tmp_path / "input.mp4"
+    output_video = tmp_path / "output.mp4"
+    checkpoint = tmp_path / "checkpoint.pt"
+    input_video.write_bytes(b"video")
+    checkpoint.write_bytes(b"checkpoint")
+    seen: dict[str, Any] = {}
+
+    class FakeEnhancer:
+        @classmethod
+        def from_checkpoint(
+            cls,
+            checkpoint_path: Path,
+            *,
+            device: str | None = None,
+            motion_budget: float | None = None,
+        ) -> "FakeEnhancer":
+            seen["checkpoint"] = checkpoint_path
+            seen["device"] = device
+            seen["motion_budget"] = motion_budget
+            return cls()
+
+        def enhance_video(
+            self,
+            input_path: Path,
+            output_path: Path,
+            *,
+            side_by_side: bool,
+            preserve_color: bool,
+            fps: float | None,
+            show_progress: bool,
+        ) -> Path:
+            seen["input"] = input_path
+            seen["side_by_side"] = side_by_side
+            seen["preserve_color"] = preserve_color
+            seen["fps"] = fps
+            seen["show_progress"] = show_progress
+            output_path.write_bytes(b"output")
+            return output_path
+
+    import nightjet.cli as nightjet_cli
+
+    monkeypatch.setattr(nightjet_cli, "NightJetEnhancer", FakeEnhancer)
+    result = runner.invoke(
+        app,
+        [
+            "enhance",
+            "--input",
+            str(input_video),
+            "--output",
+            str(output_video),
+            "--weights",
+            str(checkpoint),
+            *extra_args,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["output"] == str(output_video)
+    assert payload["weights"] == str(checkpoint)
+    assert seen["checkpoint"] == checkpoint
+    assert seen["input"] == input_video
+    return seen
 
 
 def test_cli_build_engine_dynamic_shapes_dry_run_uses_exported_input_name(

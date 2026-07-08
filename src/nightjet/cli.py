@@ -13,7 +13,12 @@ from nightjet.data import package_arrays
 from nightjet.eval import evaluate_baseline, evaluate_checkpoint
 from nightjet.export import export_onnx
 from nightjet.frame_bundle import bundle_from_video_frames
-from nightjet.inference import DEFAULT_WEIGHTS_PATH, NightJetEnhancer, is_video_path
+from nightjet.inference import (
+    DEFAULT_MOTION_BUDGET,
+    DEFAULT_WEIGHTS_PATH,
+    NightJetEnhancer,
+    is_video_path,
+)
 from nightjet.kubetorch import (
     build_submit_payload,
     payload_to_json,
@@ -97,6 +102,23 @@ def enhance(
     preserve_color: Annotated[bool, typer.Option("--preserve-color")] = False,
     fps: Annotated[float | None, typer.Option()] = None,
     progress: Annotated[bool, typer.Option("--progress/--no-progress")] = True,
+    motion_budget: Annotated[
+        float,
+        typer.Option(
+            "--motion-budget",
+            help=(
+                "PyTorch video-only cumulative inter-frame block-luma motion budget. "
+                "Lower values reset temporal history sooner during pans."
+            ),
+        ),
+    ] = DEFAULT_MOTION_BUDGET,
+    disable_motion_budget: Annotated[
+        bool,
+        typer.Option(
+            "--disable-motion-budget",
+            help="PyTorch video-only: keep the full causal frame history.",
+        ),
+    ] = False,
 ) -> None:
     if weights is not None and engine is not None:
         raise typer.BadParameter("--weights and --engine are mutually exclusive")
@@ -123,7 +145,11 @@ def enhance(
         return
 
     checkpoint = weights or DEFAULT_WEIGHTS_PATH
-    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device=device)
+    enhancer = NightJetEnhancer.from_checkpoint(
+        checkpoint,
+        device=device,
+        motion_budget=None if disable_motion_budget else motion_budget,
+    )
     if is_video_path(input):
         output_path = enhancer.enhance_video(
             input,

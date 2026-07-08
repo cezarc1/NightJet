@@ -1,7 +1,10 @@
+import subprocess
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 import imageio.v2 as imageio
+import imageio_ffmpeg
 import numpy as np
 import pytest
 import torch
@@ -12,6 +15,7 @@ from nightjet.config import ModelConfig
 from nightjet.inference import (
     NightJetEnhancer,
     _estimate_frame_count,
+    _iter_video_frames,
     _open_video_reader,
     _rgb_to_luma,
     _rgb_to_luma_array,
@@ -117,6 +121,19 @@ def test_enhance_video_decodes_with_passthrough(
     (kwargs,) = reader_kwargs
     assert kwargs["format"] == "FFMPEG"
     assert kwargs["output_params"] == ["-vsync", "0"]
+
+
+def test_open_video_reader_preserves_vfr_frame_sequence(tmp_path: Path) -> None:
+    input_path = _write_vfr_video(tmp_path)
+
+    with closing(_open_video_reader(input_path)) as reader:
+        frame_means = [
+            float(np.asarray(frame, dtype=np.float32).mean())
+            for frame in _iter_video_frames(reader)
+        ]
+
+    assert len(frame_means) == 4
+    assert np.allclose(frame_means, [30.0, 120.0, 220.0, 220.0], atol=3.0)
 
 
 def test_enhance_video_closes_reader_when_writer_fails(
@@ -228,6 +245,21 @@ def test_video_history_collapses_on_fast_pan(tmp_path: Path) -> None:
     assert len(enhancer._effective_history()) == 2
 
 
+def test_motion_budget_can_be_disabled_for_full_causal_history(tmp_path: Path) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
+    enhancer = NightJetEnhancer.from_checkpoint(
+        checkpoint, device="cpu", motion_budget=None
+    )
+    calm = np.full((16, 16, 3), 40, dtype=np.uint8)
+    jump = np.full((16, 16, 3), 200, dtype=np.uint8)
+
+    enhancer._enhance_video_frame(calm, side_by_side=False, preserve_color=False)
+    enhancer._enhance_video_frame(calm, side_by_side=False, preserve_color=False)
+    enhancer._enhance_video_frame(jump, side_by_side=False, preserve_color=False)
+
+    assert len(enhancer._effective_history()) == 3
+
+
 def test_rgb_to_luma_array_matches_pil() -> None:
     rng = np.random.default_rng(3)
     rgb = rng.integers(0, 256, size=(16, 16, 3), dtype=np.uint8)
@@ -267,6 +299,54 @@ def _write_gray_video(path: Path, **save_kwargs: Any) -> None:
         np.full((16, 16, 3), value, dtype=np.uint8) for value in (20, 80, 140)
     ]
     imageio.mimsave(path, frames, **save_kwargs)
+
+
+def _write_vfr_video(tmp_path: Path) -> Path:
+    frame_dir = tmp_path / "vfr"
+    frame_dir.mkdir()
+    for index, value in enumerate((30, 120, 220)):
+        frame = np.full((32, 32, 3), value, dtype=np.uint8)
+        Image.fromarray(frame, mode="RGB").save(frame_dir / f"frame{index}.png")
+    concat_path = frame_dir / "frames.txt"
+    concat_path.write_text(
+        "\n".join(
+            [
+                "ffconcat version 1.0",
+                "file 'frame0.png'",
+                "duration 0.10",
+                "file 'frame1.png'",
+                "duration 0.45",
+                "file 'frame2.png'",
+                "duration 0.10",
+                "file 'frame2.png'",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "vfr.mp4"
+    subprocess.run(
+        [
+            imageio_ffmpeg.get_ffmpeg_exe(),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_path),
+            "-vsync",
+            "vfr",
+            "-pix_fmt",
+            "yuv420p",
+            str(output_path),
+        ],
+        check=True,
+        cwd=frame_dir,
+    )
+    return output_path
 
 
 def _write_identity_checkpoint(tmp_path: Path, *, input_frames: int) -> Path:
