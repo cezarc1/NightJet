@@ -17,6 +17,9 @@ from nightjet.models import NightJetEdgeV1
 
 DEFAULT_WEIGHTS_PATH = Path("weights/nightjet-edge-v1.pt")
 VIDEO_SUFFIXES = {".avi", ".gif", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}
+# Max cumulative inter-frame motion (mean abs block-luma delta) allowed inside
+# the temporal window; frames beyond it are stale enough to ghost during pans.
+DEFAULT_MOTION_BUDGET = 0.045
 
 
 class NightJetEnhancer:
@@ -27,13 +30,17 @@ class NightJetEnhancer:
         checkpoint_path: Path,
         device: torch.device,
         metadata: dict[str, Any] | None = None,
+        motion_budget: float = DEFAULT_MOTION_BUDGET,
     ) -> None:
         self.model = model
         self.checkpoint_path = checkpoint_path
         self.device = device
         self.metadata = metadata or {}
         self.model_config = model.config
+        self.motion_budget = motion_budget
         self._luma_history: deque[torch.Tensor] = deque(maxlen=self.model_config.input_frames)
+        self._motion_history: deque[float] = deque(maxlen=self.model_config.input_frames)
+        self._last_block_luma: np.ndarray | None = None
 
     @classmethod
     def from_checkpoint(
@@ -56,6 +63,8 @@ class NightJetEnhancer:
 
     def reset(self) -> None:
         self._luma_history.clear()
+        self._motion_history.clear()
+        self._last_block_luma = None
 
     def enhance_window(self, window: np.ndarray) -> np.ndarray:
         luma_window = _normalize_luma_window(window)
@@ -99,7 +108,7 @@ class NightJetEnhancer:
     ) -> Path:
         self.reset()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        reader = imageio.get_reader(input_path)
+        reader = _open_video_reader(input_path)
         metadata = reader.get_meta_data()
         output_fps = fps or float(metadata.get("fps") or 30.0)
         writer = imageio.get_writer(output_path, fps=output_fps, macro_block_size=1)
@@ -115,7 +124,7 @@ class NightJetEnhancer:
             while True:
                 try:
                     frame = reader.get_data(index)
-                except IndexError:
+                except (EOFError, IndexError):
                     break
                 enhanced_rgb = self._enhance_video_frame(
                     _coerce_rgb_array(frame),
@@ -139,6 +148,13 @@ class NightJetEnhancer:
         preserve_color: bool,
     ) -> np.ndarray:
         luma = _rgb_to_luma_array(rgb)
+        block_luma = _block_mean_luma(luma)
+        if self._last_block_luma is None:
+            motion = 0.0
+        else:
+            motion = float(np.mean(np.abs(block_luma - self._last_block_luma)))
+        self._last_block_luma = block_luma
+        self._motion_history.append(motion)
         with torch.inference_mode():
             self._luma_history.append(torch.from_numpy(luma).to(self.device))
         enhanced_luma = self._enhance_history_window()
@@ -151,9 +167,26 @@ class NightJetEnhancer:
             return np.concatenate([rgb, enhanced_rgb], axis=1)
         return enhanced_rgb
 
+    def _effective_history(self) -> list[torch.Tensor]:
+        """Longest recent suffix of the window whose cumulative motion fits the budget.
+
+        Frames displaced too far from the current one (fast pans) would ghost;
+        dropping them makes padding repeat a recent frame instead.
+        """
+        history = list(self._luma_history)
+        motions = list(self._motion_history)
+        keep = 1
+        cumulative = 0.0
+        for j in range(len(history) - 1, 0, -1):
+            cumulative += motions[j]
+            if cumulative > self.motion_budget:
+                break
+            keep += 1
+        return history[-keep:]
+
     def _enhance_history_window(self) -> np.ndarray:
         with torch.inference_mode():
-            frames = torch.stack(tuple(self._luma_history), dim=0)
+            frames = torch.stack(self._effective_history(), dim=0)
             pad_count = self.model_config.input_frames - frames.shape[0]
             if pad_count > 0:
                 frames = torch.cat([frames[:1].expand(pad_count, -1, -1), frames], dim=0)
@@ -164,6 +197,20 @@ class NightJetEnhancer:
 
 def is_video_path(path: Path) -> bool:
     return path.suffix.lower() in VIDEO_SUFFIXES
+
+
+def _open_video_reader(path: Path) -> Any:
+    if path.suffix.lower() == ".gif":
+        # imageio's FFMPEG plugin refuses gif uris; the Pillow reader has no
+        # VFR duplication issue but signals end-of-stream with EOFError.
+        return imageio.get_reader(path)
+    # -vsync 0 (passthrough): decode each real frame once instead of
+    # CFR-duplicating VFR sources at the container timebase.
+    return imageio.get_reader(
+        path,
+        format="FFMPEG",  # ty: ignore[invalid-argument-type] -- stub wants Format, runtime accepts names
+        output_params=["-vsync", "0"],
+    )
 
 
 def _estimate_frame_count(metadata: dict[str, Any]) -> int | None:
@@ -249,6 +296,16 @@ def _rgb_to_luma_array(rgb: np.ndarray) -> np.ndarray:
     # Round to the uint8 grid so values match PIL's quantized Y channel.
     luma = np.rint(rgb.astype(np.float32) @ _BT601_LUMA_WEIGHTS)
     return luma.astype(np.float32, copy=False) / 255.0
+
+
+def _block_mean_luma(luma: np.ndarray, block: int = 8) -> np.ndarray:
+    # Block averaging suppresses sensor noise so motion estimates track scene
+    # motion rather than ISO grain.
+    height, width = luma.shape
+    if height < block or width < block:
+        return luma
+    trimmed = luma[: height // block * block, : width // block * block]
+    return trimmed.reshape(height // block, block, width // block, block).mean(axis=(1, 3))
 
 
 def _compose_rgb(

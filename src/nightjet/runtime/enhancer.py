@@ -8,7 +8,12 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
-from nightjet.inference import _compose_rgb, _estimate_frame_count, _load_rgb_image
+from nightjet.inference import (
+    _compose_rgb,
+    _estimate_frame_count,
+    _load_rgb_image,
+    _open_video_reader,
+)
 from nightjet.runtime.tensorrt import TensorRTLumaEnhancer, TensorRTLumaWindowEnhancer
 from nightjet.runtime.tensors import U8Frame
 
@@ -77,7 +82,7 @@ class TensorRTNightJetEnhancer:
     ) -> Path:
         self.reset()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        reader = imageio.get_reader(input_path)
+        reader = _open_video_reader(input_path)
         metadata = reader.get_meta_data()
         output_fps = fps or float(metadata.get("fps") or 30.0)
         writer = imageio.get_writer(output_path, fps=output_fps, macro_block_size=1)
@@ -93,7 +98,7 @@ class TensorRTNightJetEnhancer:
             while True:
                 try:
                     frame = reader.get_data(index)
-                except IndexError:
+                except (EOFError, IndexError):
                     break
                 rgb_image = _load_rgb_image(frame)
                 enhanced_luma = self.process_luma_u8(_rgb_to_luma_u8(rgb_image))

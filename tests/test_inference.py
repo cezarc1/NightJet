@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import imageio.v2 as imageio
 import numpy as np
@@ -98,6 +99,49 @@ def test_enhance_video_accepts_show_progress_flag(tmp_path: Path) -> None:
     assert len(imageio.mimread(output_path)) == 3
 
 
+def test_enhance_video_decodes_with_passthrough(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
+    input_path = tmp_path / "input.mp4"
+    output_path = tmp_path / "output.mp4"
+    frames: list[ArrayLike] = [
+        np.full((16, 16, 3), value, dtype=np.uint8) for value in (20, 80, 140)
+    ]
+    imageio.mimsave(input_path, frames, fps=5, macro_block_size=1)
+    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
+
+    real_get_reader = imageio.get_reader
+    reader_calls: list[dict] = []
+
+    def spy_get_reader(uri: Any, *args: Any, **kwargs: Any) -> Any:
+        reader_calls.append({"uri": uri, "args": args, "kwargs": kwargs})
+        return real_get_reader(uri, *args, **kwargs)
+
+    monkeypatch.setattr("nightjet.inference.imageio.get_reader", spy_get_reader)
+    enhancer.enhance_video(input_path, output_path)
+
+    assert len(imageio.mimread(output_path)) == 3
+    (call,) = reader_calls
+    assert call["kwargs"]["format"] == "FFMPEG"
+    assert call["kwargs"]["output_params"] == ["-vsync", "0"]
+
+
+def test_enhance_video_reads_gif_input(tmp_path: Path) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
+    input_path = tmp_path / "input.gif"
+    output_path = tmp_path / "output.mp4"
+    frames: list[ArrayLike] = [
+        np.full((16, 16, 3), value, dtype=np.uint8) for value in (20, 80, 140)
+    ]
+    imageio.mimsave(input_path, frames)
+    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
+
+    enhancer.enhance_video(input_path, output_path)
+
+    assert len(imageio.mimread(output_path)) == 3
+
+
 def test_enhance_video_preserve_color_and_side_by_side(tmp_path: Path) -> None:
     checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
     input_path = tmp_path / "input.mp4"
@@ -123,9 +167,11 @@ def test_streaming_window_matches_enhance_window(tmp_path: Path) -> None:
     checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
     enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
     rng = np.random.default_rng(7)
+    base = rng.integers(0, 200, size=(6, 8, 3), dtype=np.uint8)
     history: list[np.ndarray] = []
-    for _ in range(4):
-        rgb = rng.integers(0, 256, size=(6, 8, 3), dtype=np.uint8)
+    for step in range(4):
+        # Low-motion frames keep the full history inside the motion budget.
+        rgb = np.clip(base.astype(np.int16) + 2 * step, 0, 255).astype(np.uint8)
         history.append(_rgb_to_luma_array(rgb))
 
         streamed = enhancer._enhance_video_frame(rgb, side_by_side=False, preserve_color=False)
@@ -134,6 +180,36 @@ def test_streaming_window_matches_enhance_window(tmp_path: Path) -> None:
         expected = np.stack([_to_uint8(reference_luma)] * 3, axis=-1)
         delta = np.abs(streamed.astype(np.int16) - expected.astype(np.int16))
         assert int(delta.max()) <= 1
+
+
+def test_effective_history_shrinks_under_motion_budget(tmp_path: Path) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=5)
+    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
+    tensors = [torch.full((4, 4), float(i)) for i in range(5)]
+    enhancer._luma_history.extend(tensors)
+    enhancer._motion_history.extend([0.0, 0.001, 0.001, 0.05, 0.001])
+
+    effective = enhancer._effective_history()
+
+    assert len(effective) == 2
+    assert effective[0] is tensors[3]
+    assert effective[1] is tensors[4]
+
+
+def test_video_history_collapses_on_fast_pan(tmp_path: Path) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
+    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
+    calm = np.full((16, 16, 3), 40, dtype=np.uint8)
+    for _ in range(3):
+        enhancer._enhance_video_frame(calm, side_by_side=False, preserve_color=False)
+    assert len(enhancer._effective_history()) == 3
+
+    jump = np.full((16, 16, 3), 200, dtype=np.uint8)
+    enhancer._enhance_video_frame(jump, side_by_side=False, preserve_color=False)
+    assert len(enhancer._effective_history()) == 1
+
+    enhancer._enhance_video_frame(jump, side_by_side=False, preserve_color=False)
+    assert len(enhancer._effective_history()) == 2
 
 
 def test_rgb_to_luma_array_matches_pil() -> None:
