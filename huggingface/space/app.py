@@ -53,13 +53,12 @@ def enhance_demo_image(
     input_image: Image.Image | np.ndarray | None,
     preserve_color: bool = False,
     max_long_edge: int = MAX_LONG_EDGE,
-) -> tuple[Image.Image, Image.Image]:
+) -> Image.Image:
     if input_image is None:
         raise ValueError("Upload an image before running NightJet.")
     original = _prepare_image(input_image, max_long_edge=max_long_edge)
     enhancer = _load_enhancer(_device())
-    enhanced = enhancer.enhance_image(original, preserve_color=preserve_color)
-    return enhanced, _side_by_side(original, enhanced)
+    return enhancer.enhance_image(original, preserve_color=preserve_color)
 
 
 @_gpu(duration=120)
@@ -89,7 +88,7 @@ def enhance_demo_video(
         for index, frame in enumerate(_iter_video_frames(reader)):
             if index >= max_frames:
                 break
-            rgb = _resize_for_demo(
+            rgb = _resize_for_video_demo(
                 _array_to_image(_coerce_rgb_array(frame)),
                 max_long_edge=max_long_edge,
             )
@@ -123,13 +122,11 @@ def build_demo() -> Any:
                             value=False,
                         )
                         run_button = gr.Button("Enhance image", variant="primary")
-                with gr.Row():
-                    enhanced = gr.Image(type="pil", label="NightJet output")
-                    comparison = gr.Image(type="pil", label="Before / after")
+                enhanced = gr.Image(type="pil", label="NightJet output")
                 run_button.click(
                     fn=enhance_demo_image,
                     inputs=[input_image, preserve_color],
-                    outputs=[enhanced, comparison],
+                    outputs=[enhanced],
                     api_name="enhance",
                 )
             with gr.Tab("Video"):
@@ -199,6 +196,23 @@ def _resize_for_demo(image: Image.Image, *, max_long_edge: int) -> Image.Image:
     return image.resize(size, Image.Resampling.LANCZOS)
 
 
+def _resize_for_video_demo(image: Image.Image, *, max_long_edge: int) -> Image.Image:
+    return _ensure_even_dimensions(_resize_for_demo(image, max_long_edge=max_long_edge))
+
+
+def _ensure_even_dimensions(image: Image.Image) -> Image.Image:
+    width, height = image.size
+    even_width = width if width % 2 == 0 else width - 1
+    even_height = height if height % 2 == 0 else height - 1
+    even_width = max(2, even_width)
+    even_height = max(2, even_height)
+    if (even_width, even_height) == image.size:
+        return image
+    if even_width > width or even_height > height:
+        return image.resize((even_width, even_height), Image.Resampling.LANCZOS)
+    return image.crop((0, 0, even_width, even_height))
+
+
 def _max_video_frames(metadata: dict[str, Any], *, max_seconds: float) -> int:
     fps = _output_video_fps(metadata)
     estimated_frames = _estimate_frame_count(metadata)
@@ -213,16 +227,6 @@ def _output_video_fps(metadata: dict[str, Any]) -> float:
     if not isinstance(fps, int | float) or not np.isfinite(fps) or fps <= 0:
         return min(MAX_VIDEO_FPS, 12.0)
     return float(min(float(fps), MAX_VIDEO_FPS))
-
-
-def _side_by_side(original: Image.Image, enhanced: Image.Image) -> Image.Image:
-    original = original.convert("RGB")
-    enhanced = enhanced.convert("RGB")
-    size = (original.width + enhanced.width, max(original.height, enhanced.height))
-    canvas = Image.new("RGB", size)
-    canvas.paste(original, (0, 0))
-    canvas.paste(enhanced, (original.width, 0))
-    return canvas
 
 
 def _to_uint8(array: np.ndarray) -> np.ndarray:

@@ -16,7 +16,7 @@ Interactive demo for `ggamecrazy/nightjet-edge-v1`, a tiny luma-first low-light
 enhancement model.
 
 Start with the bundled Jetson/Arducam example image or upload your own image.
-The image demo returns the enhanced image and a before/after comparison.
+The image demo returns the enhanced image while keeping the input visible.
 
 The video tab converts a short uploaded clip into a before/after comparison on
 ZeroGPU. Longer local video inference, ONNX export, TensorRT engine builds, and

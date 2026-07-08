@@ -23,13 +23,12 @@ def test_space_prediction_defaults_to_grayscale_rgb(
     monkeypatch.setattr(app, "_download_weights", lambda: checkpoint)
     app.clear_model_cache()
 
-    enhanced, comparison = app.enhance_demo_image(_color_image(), preserve_color=False)
+    enhanced = app.enhance_demo_image(_color_image(), preserve_color=False)
 
     pixels = np.asarray(enhanced)
     assert enhanced.mode == "RGB"
     assert np.array_equal(pixels[..., 0], pixels[..., 1])
     assert np.array_equal(pixels[..., 1], pixels[..., 2])
-    assert comparison.size == (enhanced.size[0] * 2, enhanced.size[1])
 
 
 def test_space_prediction_can_preserve_original_chroma(
@@ -40,7 +39,7 @@ def test_space_prediction_can_preserve_original_chroma(
     monkeypatch.setattr(app, "_download_weights", lambda: checkpoint)
     app.clear_model_cache()
 
-    enhanced, _comparison = app.enhance_demo_image(_color_image(), preserve_color=True)
+    enhanced = app.enhance_demo_image(_color_image(), preserve_color=True)
 
     pixels = np.asarray(enhanced)
     assert not np.array_equal(pixels[..., 0], pixels[..., 1])
@@ -55,10 +54,9 @@ def test_space_prediction_resizes_large_inputs_before_inference(
     app.clear_model_cache()
     image = Image.new("RGB", (2000, 1000), color=(32, 64, 96))
 
-    enhanced, comparison = app.enhance_demo_image(image, preserve_color=False, max_long_edge=1000)
+    enhanced = app.enhance_demo_image(image, preserve_color=False, max_long_edge=1000)
 
     assert enhanced.size == (1000, 500)
-    assert comparison.size == (2000, 500)
 
 
 def test_space_default_example_image_exists() -> None:
@@ -93,6 +91,34 @@ def test_space_video_conversion_writes_side_by_side_clip(
     output_frames = imageio.mimread(output_path)
     assert len(output_frames) == 3
     assert np.asarray(output_frames[0]).shape[:2] == (8, 16)
+
+
+def test_space_video_conversion_writes_h264_safe_even_dimensions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _load_space_app()
+    checkpoint = _write_identity_checkpoint(tmp_path)
+    monkeypatch.setattr(app, "_download_weights", lambda: checkpoint)
+    app.clear_model_cache()
+    input_video = tmp_path / "input.mp4"
+    frames: list[ArrayLike] = [
+        np.full((90, 160, 3), value, dtype=np.uint8) for value in (20, 80, 140)
+    ]
+    imageio.mimsave(input_video, frames, fps=3, macro_block_size=1)
+
+    output_path = Path(
+        app.enhance_demo_video(
+            str(input_video),
+            preserve_color=False,
+            max_seconds=1.0,
+            max_long_edge=80,
+        )
+    )
+
+    output_frames = imageio.mimread(output_path)
+    height, width = np.asarray(output_frames[0]).shape[:2]
+    assert height % 2 == 0
+    assert width % 2 == 0
 
 
 def _load_space_app() -> ModuleType:
