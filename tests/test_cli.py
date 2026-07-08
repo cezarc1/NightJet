@@ -234,7 +234,12 @@ def test_cli_enhance_can_route_to_tensorrt_engine(
             self.engine_path = engine_path
 
         @classmethod
-        def from_engine(cls, engine_path: Path) -> "FakeEngineEnhancer":
+        def from_engine(
+            cls,
+            engine_path: Path,
+            *,
+            motion_budget: float | None = None,
+        ) -> "FakeEngineEnhancer":
             return cls(engine_path)
 
         def enhance_image(
@@ -276,6 +281,30 @@ def test_cli_enhance_can_route_to_tensorrt_engine(
     assert output_image.exists()
 
 
+def test_cli_enhance_passes_motion_budget_to_tensorrt_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _run_fake_tensorrt_video_enhance(
+        tmp_path,
+        monkeypatch,
+        extra_args=["--motion-budget", "0.12"],
+    )
+
+    assert seen["motion_budget"] == 0.12
+
+
+def test_cli_enhance_can_disable_motion_budget_for_tensorrt_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _run_fake_tensorrt_video_enhance(
+        tmp_path,
+        monkeypatch,
+        extra_args=["--disable-motion-budget"],
+    )
+
+    assert seen["motion_budget"] is None
+
+
 def test_cli_enhance_passes_motion_budget_to_pytorch_video(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -297,6 +326,80 @@ def test_cli_enhance_can_disable_motion_budget_for_pytorch_video(
         extra_args=["--disable-motion-budget"],
     )
 
+    assert seen["motion_budget"] is None
+
+
+def test_cli_serve_passes_motion_budget_to_runtime_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    engine = tmp_path / "nightjet.plan"
+    engine.write_bytes(b"engine")
+    seen: dict[str, Any] = {}
+
+    class FakeMetrics:
+        def to_json_dict(self) -> dict[str, bool]:
+            return {"ready": True}
+
+    def fake_run_runtime_server(config: Any) -> FakeMetrics:
+        seen["engine_path"] = config.engine_path
+        seen["motion_budget"] = config.motion_budget
+        return FakeMetrics()
+
+    import nightjet.cli as nightjet_cli
+
+    monkeypatch.setattr(nightjet_cli, "run_runtime_server", fake_run_runtime_server)
+
+    result = runner.invoke(
+        app,
+        [
+            "serve",
+            "--engine",
+            str(engine),
+            "--exit-after-max-frames",
+            "--motion-budget",
+            "0.12",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == {"engine_path": engine, "motion_budget": 0.12}
+
+
+def test_cli_serve_can_disable_motion_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    engine = tmp_path / "nightjet.plan"
+    engine.write_bytes(b"engine")
+    seen: dict[str, Any] = {}
+
+    class FakeMetrics:
+        def to_json_dict(self) -> dict[str, bool]:
+            return {"ready": True}
+
+    def fake_run_runtime_server(config: Any) -> FakeMetrics:
+        seen["motion_budget"] = config.motion_budget
+        return FakeMetrics()
+
+    import nightjet.cli as nightjet_cli
+
+    monkeypatch.setattr(nightjet_cli, "run_runtime_server", fake_run_runtime_server)
+
+    result = runner.invoke(
+        app,
+        [
+            "serve",
+            "--engine",
+            str(engine),
+            "--exit-after-max-frames",
+            "--disable-motion-budget",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
     assert seen["motion_budget"] is None
 
 
@@ -399,6 +502,75 @@ def _run_fake_pytorch_video_enhance(
     assert payload["output"] == str(output_video)
     assert payload["weights"] == str(checkpoint)
     assert seen["checkpoint"] == checkpoint
+    assert seen["input"] == input_video
+    return seen
+
+
+def _run_fake_tensorrt_video_enhance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    extra_args: list[str],
+) -> dict[str, Any]:
+    runner = CliRunner()
+    input_video = tmp_path / "input.mp4"
+    output_video = tmp_path / "output.mp4"
+    engine = tmp_path / "nightjet.plan"
+    input_video.write_bytes(b"video")
+    engine.write_bytes(b"engine")
+    seen: dict[str, Any] = {}
+
+    class FakeEngineEnhancer:
+        @classmethod
+        def from_engine(
+            cls,
+            engine_path: Path,
+            **kwargs: Any,
+        ) -> "FakeEngineEnhancer":
+            seen["engine"] = engine_path
+            seen["motion_budget"] = kwargs.get("motion_budget", "missing")
+            return cls()
+
+        def enhance_video(
+            self,
+            input_path: Path,
+            output_path: Path,
+            *,
+            side_by_side: bool,
+            preserve_color: bool,
+            fps: float | None,
+            show_progress: bool,
+        ) -> Path:
+            seen["input"] = input_path
+            seen["side_by_side"] = side_by_side
+            seen["preserve_color"] = preserve_color
+            seen["fps"] = fps
+            seen["show_progress"] = show_progress
+            output_path.write_bytes(b"output")
+            return output_path
+
+    import nightjet.cli as nightjet_cli
+
+    monkeypatch.setattr(nightjet_cli, "TensorRTNightJetEnhancer", FakeEngineEnhancer)
+    result = runner.invoke(
+        app,
+        [
+            "enhance",
+            "--input",
+            str(input_video),
+            "--output",
+            str(output_video),
+            "--engine",
+            str(engine),
+            *extra_args,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["output"] == str(output_video)
+    assert payload["engine"] == str(engine)
+    assert seen["engine"] == engine
     assert seen["input"] == input_video
     return seen
 

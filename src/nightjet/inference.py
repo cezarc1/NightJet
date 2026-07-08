@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -15,14 +15,17 @@ from tqdm import tqdm
 
 from nightjet.config import ModelConfig
 from nightjet.devices import resolve_device
-from nightjet.metrics import mae
 from nightjet.models import NightJetEdgeV1
+from nightjet.motion import (
+    DEFAULT_MOTION_BUDGET,
+    block_mean_luma,
+    mean_abs_luma_delta,
+    motion_window_size,
+)
 
 DEFAULT_WEIGHTS_PATH = Path("weights/nightjet-edge-v1.pt")
 VIDEO_SUFFIXES = {".avi", ".gif", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}
 MODEL_INPUT_DTYPE = torch.float32
-# Cumulative inter-frame motion (mean abs block-luma delta) tolerated inside the window.
-DEFAULT_MOTION_BUDGET = 0.045
 
 
 class NightJetEnhancer:
@@ -149,9 +152,9 @@ class NightJetEnhancer:
     ) -> np.ndarray:
         luma = _rgb_to_luma_array(rgb)
         if self.model_config.input_frames > 1:
-            block_luma = _block_mean_luma(luma)
+            block_luma = block_mean_luma(luma)
             if self._last_block_luma is not None:
-                self._motion_history.append(mae(block_luma, self._last_block_luma))
+                self._motion_history.append(mean_abs_luma_delta(block_luma, self._last_block_luma))
             self._last_block_luma = block_luma
         with torch.inference_mode():
             self._luma_history.append(
@@ -170,7 +173,7 @@ class NightJetEnhancer:
     def _effective_history(self) -> list[torch.Tensor]:
         if self.motion_budget is None:
             return list(self._luma_history)
-        keep = _motion_window_size(tuple(self._motion_history), self.motion_budget)
+        keep = motion_window_size(tuple(self._motion_history), self.motion_budget)
         return list(self._luma_history)[-keep:]
 
     def _enhance_history_window(self) -> np.ndarray:
@@ -210,18 +213,6 @@ def _iter_video_frames(reader: Any) -> Iterator[Any]:
         except (EOFError, IndexError):
             return
         index += 1
-
-
-def _motion_window_size(motions: Sequence[float], budget: float) -> int:
-    """Number of trailing window frames whose cumulative inter-frame motion fits the budget."""
-    keep = 1
-    cumulative = 0.0
-    for motion in reversed(motions):
-        cumulative += motion
-        if cumulative > budget:
-            break
-        keep += 1
-    return keep
 
 
 def _estimate_frame_count(metadata: dict[str, Any]) -> int | None:
@@ -304,14 +295,6 @@ def _coerce_rgb_array(frame: np.ndarray) -> np.ndarray:
 
 def _rgb_to_luma_array(rgb: np.ndarray) -> np.ndarray:
     return np.rint(rgb.astype(np.float32) @ _BT601_LUMA_WEIGHTS) / 255.0
-
-
-def _block_mean_luma(luma: np.ndarray, block: int = 8) -> np.ndarray:
-    blocks_h, blocks_w = luma.shape[0] // block, luma.shape[1] // block
-    if blocks_h == 0 or blocks_w == 0:
-        return luma
-    trimmed = luma[: blocks_h * block, : blocks_w * block]
-    return trimmed.reshape(blocks_h, block, blocks_w, block).mean(axis=(1, 3))
 
 
 def _compose_rgb(

@@ -107,7 +107,7 @@ def enhance(
         typer.Option(
             "--motion-budget",
             help=(
-                "PyTorch video-only cumulative inter-frame block-luma motion budget. "
+                "Video cumulative inter-frame block-luma motion budget. "
                 "Lower values reset temporal history sooner during pans."
             ),
         ),
@@ -116,14 +116,17 @@ def enhance(
         bool,
         typer.Option(
             "--disable-motion-budget",
-            help="PyTorch video-only: keep the full causal frame history.",
+            help="Keep the full causal frame history instead of adapting during pans.",
         ),
     ] = False,
 ) -> None:
     if weights is not None and engine is not None:
         raise typer.BadParameter("--weights and --engine are mutually exclusive")
     if engine is not None:
-        enhancer = TensorRTNightJetEnhancer.from_engine(engine)
+        enhancer = TensorRTNightJetEnhancer.from_engine(
+            engine,
+            motion_budget=None if disable_motion_budget else motion_budget,
+        )
         if is_video_path(input):
             output_path = enhancer.enhance_video(
                 input,
@@ -214,6 +217,23 @@ def serve(
     resolution: Annotated[str, typer.Option()] = "1280x720",
     pixel_format: Annotated[str | None, typer.Option()] = None,
     fps: Annotated[float | None, typer.Option()] = None,
+    motion_budget: Annotated[
+        float,
+        typer.Option(
+            "--motion-budget",
+            help=(
+                "Cumulative inter-frame block-luma motion budget for temporal engines. "
+                "Lower values reset temporal history sooner during pans."
+            ),
+        ),
+    ] = DEFAULT_MOTION_BUDGET,
+    disable_motion_budget: Annotated[
+        bool,
+        typer.Option(
+            "--disable-motion-budget",
+            help="Keep the full causal frame history instead of adapting during pans.",
+        ),
+    ] = False,
     host: Annotated[str, typer.Option()] = "0.0.0.0",
     port: Annotated[int, typer.Option()] = 8000,
     max_frames: Annotated[int | None, typer.Option()] = None,
@@ -222,6 +242,7 @@ def serve(
     metrics = run_runtime_server(
         RuntimeServerConfig(
             engine_path=engine,
+            motion_budget=None if disable_motion_budget else motion_budget,
             source=source,
             camera=camera,
             resolution=resolution,

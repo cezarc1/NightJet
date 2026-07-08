@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from nightjet.motion import DEFAULT_MOTION_BUDGET
 from nightjet.runtime.tensors import (
     CausalLumaWindowPacker,
     U8Frame,
@@ -82,15 +83,18 @@ class TensorRTLumaEnhancer:
             self._output_cpu_tensor.copy_(self._output_tensor, non_blocking=False)
         self._stream.synchronize()
         elapsed_ms = (time.perf_counter() - start) * 1000.0
-        return nchw_float_to_luma_u8(self._output_cpu_tensor.numpy()), {
-            "tensorrt_ms": elapsed_ms
-        }
+        return nchw_float_to_luma_u8(self._output_cpu_tensor.numpy()), {"tensorrt_ms": elapsed_ms}
 
 
 class TensorRTLumaWindowEnhancer:
     """Run a static 1xNxHxW NightJet luma-window TensorRT engine."""
 
-    def __init__(self, engine_path: Path | str) -> None:
+    def __init__(
+        self,
+        engine_path: Path | str,
+        *,
+        motion_budget: float | None = DEFAULT_MOTION_BUDGET,
+    ) -> None:
         self.engine_path = Path(engine_path)
         if not self.engine_path.exists():
             raise FileNotFoundError(f"TensorRT engine not found: {self.engine_path}")
@@ -118,7 +122,10 @@ class TensorRTLumaWindowEnhancer:
             self._torch, self._input_shape, pin_memory=True
         )
         self._host_input = self._input_cpu_tensor.numpy()
-        self._causal_packer = CausalLumaWindowPacker(self._host_input)
+        self._causal_packer = CausalLumaWindowPacker(
+            self._host_input,
+            motion_budget=motion_budget,
+        )
         self._output_cpu_tensor, self._output_cpu_pinned = _empty_cpu_tensor(
             self._torch, self._output_shape, pin_memory=True
         )
@@ -174,6 +181,7 @@ class TensorRTLumaWindowEnhancer:
         pack_ms = (time.perf_counter() - pack_start) * 1000.0
         output, metrics = self._execute_current_input(start, pack_ms)
         metrics["causal_window_fill"] = float(self._causal_packer.fill)
+        metrics["causal_window_effective_fill"] = float(self._causal_packer.effective_fill)
         return output, metrics
 
     def _execute_current_input(
