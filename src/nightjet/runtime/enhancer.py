@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-import imageio.v2 as imageio
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
@@ -14,6 +14,7 @@ from nightjet.inference import (
     _iter_video_frames,
     _load_rgb_image,
     _open_video_reader,
+    _open_video_writer,
 )
 from nightjet.runtime.tensorrt import TensorRTLumaEnhancer, TensorRTLumaWindowEnhancer
 from nightjet.runtime.tensors import U8Frame
@@ -83,31 +84,31 @@ class TensorRTNightJetEnhancer:
     ) -> Path:
         self.reset()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        reader = _open_video_reader(input_path)
-        metadata = reader.get_meta_data()
-        output_fps = fps or float(metadata.get("fps") or 30.0)
-        writer = imageio.get_writer(output_path, fps=output_fps, macro_block_size=1)
-        progress = tqdm(
-            total=_estimate_frame_count(metadata),
-            desc=input_path.name,
-            unit="frame",
-            disable=None if show_progress else True,
-        )
-        try:
-            for frame in _iter_video_frames(reader):
-                rgb_image = _load_rgb_image(frame)
-                enhanced_luma = self.process_luma_u8(_rgb_to_luma_u8(rgb_image))
-                enhanced_rgb = _compose_rgb(rgb_image, enhanced_luma, preserve_color=preserve_color)
-                if side_by_side:
-                    enhanced_rgb = np.concatenate(
-                        [np.asarray(rgb_image, dtype=np.uint8), enhanced_rgb], axis=1
+        # closing() instead of bare with: imageio's __exit__ skips close() on exceptions.
+        with closing(_open_video_reader(input_path)) as reader:
+            metadata = reader.get_meta_data()
+            output_fps = fps or float(metadata.get("fps") or 30.0)
+            with (
+                closing(_open_video_writer(output_path, output_fps)) as writer,
+                tqdm(
+                    total=_estimate_frame_count(metadata),
+                    desc=input_path.name,
+                    unit="frame",
+                    disable=None if show_progress else True,
+                ) as progress,
+            ):
+                for frame in _iter_video_frames(reader):
+                    rgb_image = _load_rgb_image(frame)
+                    enhanced_luma = self.process_luma_u8(_rgb_to_luma_u8(rgb_image))
+                    enhanced_rgb = _compose_rgb(
+                        rgb_image, enhanced_luma, preserve_color=preserve_color
                     )
-                writer.append_data(enhanced_rgb)
-                progress.update(1)
-        finally:
-            progress.close()
-            writer.close()
-            reader.close()
+                    if side_by_side:
+                        enhanced_rgb = np.concatenate(
+                            [np.asarray(rgb_image, dtype=np.uint8), enhanced_rgb], axis=1
+                        )
+                    writer.append_data(enhanced_rgb)
+                    progress.update(1)
         return output_path
 
 

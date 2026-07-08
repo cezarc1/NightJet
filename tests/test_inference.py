@@ -12,6 +12,7 @@ from nightjet.config import ModelConfig
 from nightjet.inference import (
     NightJetEnhancer,
     _estimate_frame_count,
+    _open_video_reader,
     _rgb_to_luma,
     _rgb_to_luma_array,
     _to_uint8,
@@ -116,6 +117,33 @@ def test_enhance_video_decodes_with_passthrough(
     (kwargs,) = reader_kwargs
     assert kwargs["format"] == "FFMPEG"
     assert kwargs["output_params"] == ["-vsync", "0"]
+
+
+def test_enhance_video_closes_reader_when_writer_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
+    input_path = tmp_path / "input.mp4"
+    _write_gray_video(input_path, fps=5, macro_block_size=1)
+    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu")
+
+    opened: list[Any] = []
+
+    def spy_open_reader(path: Path) -> Any:
+        reader = _open_video_reader(path)
+        opened.append(reader)
+        return reader
+
+    def failing_open_writer(path: Path, fps: float) -> Any:
+        raise RuntimeError("writer failed")
+
+    monkeypatch.setattr("nightjet.inference._open_video_reader", spy_open_reader)
+    monkeypatch.setattr("nightjet.inference._open_video_writer", failing_open_writer)
+    with pytest.raises(RuntimeError, match="writer failed"):
+        enhancer.enhance_video(input_path, tmp_path / "output.mp4")
+
+    (reader,) = opened
+    assert reader.closed
 
 
 def test_enhance_video_reads_gif_input(tmp_path: Path) -> None:

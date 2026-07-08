@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from collections import deque
 from collections.abc import Iterator, Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -108,29 +109,27 @@ class NightJetEnhancer:
     ) -> Path:
         self.reset()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        reader = _open_video_reader(input_path)
-        metadata = reader.get_meta_data()
-        output_fps = fps or float(metadata.get("fps") or 30.0)
-        writer = imageio.get_writer(output_path, fps=output_fps, macro_block_size=1)
-        progress = tqdm(
-            total=_estimate_frame_count(metadata),
-            desc=input_path.name,
-            unit="frame",
-            disable=None if show_progress else True,
-        )
-        try:
-            for frame in _iter_video_frames(reader):
-                enhanced_rgb = self._enhance_video_frame(
-                    _coerce_rgb_array(frame),
-                    side_by_side=side_by_side,
-                    preserve_color=preserve_color,
-                )
-                writer.append_data(enhanced_rgb)
-                progress.update(1)
-        finally:
-            progress.close()
-            writer.close()
-            reader.close()
+        # closing() instead of bare with: imageio's __exit__ skips close() on exceptions.
+        with closing(_open_video_reader(input_path)) as reader:
+            metadata = reader.get_meta_data()
+            output_fps = fps or float(metadata.get("fps") or 30.0)
+            with (
+                closing(_open_video_writer(output_path, output_fps)) as writer,
+                tqdm(
+                    total=_estimate_frame_count(metadata),
+                    desc=input_path.name,
+                    unit="frame",
+                    disable=None if show_progress else True,
+                ) as progress,
+            ):
+                for frame in _iter_video_frames(reader):
+                    enhanced_rgb = self._enhance_video_frame(
+                        _coerce_rgb_array(frame),
+                        side_by_side=side_by_side,
+                        preserve_color=preserve_color,
+                    )
+                    writer.append_data(enhanced_rgb)
+                    progress.update(1)
         return output_path
 
     def _enhance_video_frame(
@@ -185,6 +184,10 @@ def _open_video_reader(path: Path) -> Any:
         format="FFMPEG",  # ty: ignore[invalid-argument-type]
         output_params=["-vsync", "0"],
     )
+
+
+def _open_video_writer(path: Path, fps: float) -> Any:
+    return imageio.get_writer(path, fps=fps, macro_block_size=1)
 
 
 def _iter_video_frames(reader: Any) -> Iterator[Any]:
