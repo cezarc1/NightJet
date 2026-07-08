@@ -127,6 +127,8 @@ unavailable, leave the Space on CPU Basic and switch hardware later.
 4. Confirm the enhanced output is grayscale RGB and the comparison image shows
    input on the left, NightJet output on the right.
 5. Enable `Preserve original color` and confirm the output keeps visible chroma.
+6. Upload a short video clip in the `Video` tab and confirm the output is a
+   side-by-side before/after clip.
 
 ## Update Policy
 

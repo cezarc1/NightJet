@@ -4,9 +4,11 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+import imageio.v2 as imageio
 import numpy as np
 import pytest
 import torch
+from imageio.typing import ArrayLike
 from PIL import Image
 
 from nightjet.config import ModelConfig
@@ -57,6 +59,40 @@ def test_space_prediction_resizes_large_inputs_before_inference(
 
     assert enhanced.size == (1000, 500)
     assert comparison.size == (2000, 500)
+
+
+def test_space_default_example_image_exists() -> None:
+    app = _load_space_app()
+
+    assert app.DEFAULT_EXAMPLE_IMAGE.exists()
+    with Image.open(app.DEFAULT_EXAMPLE_IMAGE) as image:
+        assert image.size == (1280, 720)
+
+
+def test_space_video_conversion_writes_side_by_side_clip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _load_space_app()
+    checkpoint = _write_identity_checkpoint(tmp_path)
+    monkeypatch.setattr(app, "_download_weights", lambda: checkpoint)
+    app.clear_model_cache()
+    input_video = tmp_path / "input.mp4"
+    frames: list[ArrayLike] = [np.full((8, 8, 3), value, dtype=np.uint8) for value in (20, 80, 140)]
+    imageio.mimsave(input_video, frames, fps=3, macro_block_size=1)
+
+    output_path = Path(
+        app.enhance_demo_video(
+            str(input_video),
+            preserve_color=False,
+            max_seconds=1.0,
+            max_long_edge=8,
+        )
+    )
+
+    assert output_path.exists()
+    output_frames = imageio.mimread(output_path)
+    assert len(output_frames) == 3
+    assert np.asarray(output_frames[0]).shape[:2] == (8, 16)
 
 
 def _load_space_app() -> ModuleType:
