@@ -3,6 +3,9 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
+U8_FRAME_DTYPE = np.uint8
+FLOAT_TENSOR_DTYPE = np.float32
+
 U8Frame = NDArray[np.uint8]
 F32Tensor = NDArray[np.float32]
 
@@ -10,13 +13,14 @@ F32Tensor = NDArray[np.float32]
 def u8_luma_to_nchw_float(luma: U8Frame) -> F32Tensor:
     if luma.ndim != 2:
         raise ValueError(f"expected 2D luma frame, got shape {luma.shape}")
-    output = np.empty((1, 1, luma.shape[0], luma.shape[1]), dtype=np.float32)
+    output = np.empty((1, 1, luma.shape[0], luma.shape[1]), dtype=FLOAT_TENSOR_DTYPE)
     return write_u8_luma_to_nchw_float(luma, output)
 
 
 def write_u8_luma_to_nchw_float(luma: U8Frame, output: F32Tensor) -> F32Tensor:
     if luma.ndim != 2:
         raise ValueError(f"expected 2D luma frame, got shape {luma.shape}")
+    _validate_float_tensor_dtype(output, name="output")
     expected = (1, 1, luma.shape[0], luma.shape[1])
     if output.shape != expected:
         raise ValueError(f"expected output shape {expected}, got {output.shape}")
@@ -28,19 +32,20 @@ def nchw_float_to_luma_u8(tensor: F32Tensor) -> U8Frame:
     if tensor.ndim != 4 or tensor.shape[0] != 1 or tensor.shape[1] != 1:
         raise ValueError(f"expected NCHW tensor with shape 1x1xHxW, got {tensor.shape}")
     clipped = np.clip(tensor[0, 0], 0.0, 1.0)
-    return np.ascontiguousarray(np.rint(clipped * 255.0).astype(np.uint8))
+    return np.ascontiguousarray(np.rint(clipped * 255.0).astype(U8_FRAME_DTYPE))
 
 
 def bgr_u8_to_nchw_rgb_float(frame: U8Frame) -> F32Tensor:
     if frame.ndim != 3 or frame.shape[2] != 3:
         raise ValueError(f"expected BGR frame with shape HxWx3, got {frame.shape}")
-    output = np.empty((1, 3, frame.shape[0], frame.shape[1]), dtype=np.float32)
+    output = np.empty((1, 3, frame.shape[0], frame.shape[1]), dtype=FLOAT_TENSOR_DTYPE)
     return write_bgr_u8_to_nchw_rgb_float(frame, output)
 
 
 def write_bgr_u8_to_nchw_rgb_float(frame: U8Frame, output: F32Tensor) -> F32Tensor:
     if frame.ndim != 3 or frame.shape[2] != 3:
         raise ValueError(f"expected BGR frame with shape HxWx3, got {frame.shape}")
+    _validate_float_tensor_dtype(output, name="output")
     expected = (1, 3, frame.shape[0], frame.shape[1])
     if output.shape != expected:
         raise ValueError(f"expected output shape {expected}, got {output.shape}")
@@ -54,10 +59,10 @@ def nchw_rgb_float_to_bgr_u8(tensor: F32Tensor) -> U8Frame:
     if tensor.ndim != 4 or tensor.shape[0] != 1 or tensor.shape[1] != 3:
         raise ValueError(f"expected NCHW tensor with shape 1x3xHxW, got {tensor.shape}")
     clipped = np.clip(tensor[0], 0.0, 1.0)
-    bgr = np.empty((tensor.shape[2], tensor.shape[3], 3), dtype=np.uint8)
-    bgr[:, :, 2] = np.rint(clipped[0] * 255.0).astype(np.uint8)
-    bgr[:, :, 1] = np.rint(clipped[1] * 255.0).astype(np.uint8)
-    bgr[:, :, 0] = np.rint(clipped[2] * 255.0).astype(np.uint8)
+    bgr = np.empty((tensor.shape[2], tensor.shape[3], 3), dtype=U8_FRAME_DTYPE)
+    bgr[:, :, 2] = np.rint(clipped[0] * 255.0).astype(U8_FRAME_DTYPE)
+    bgr[:, :, 1] = np.rint(clipped[1] * 255.0).astype(U8_FRAME_DTYPE)
+    bgr[:, :, 0] = np.rint(clipped[2] * 255.0).astype(U8_FRAME_DTYPE)
     return np.ascontiguousarray(bgr)
 
 
@@ -67,6 +72,7 @@ class CausalLumaWindowPacker:
     def __init__(self, host_input: F32Tensor) -> None:
         if host_input.ndim != 4 or host_input.shape[0] != 1 or host_input.shape[1] < 2:
             raise ValueError(f"expected host input shape 1xNxHxW, got {host_input.shape}")
+        _validate_float_tensor_dtype(host_input, name="host input")
         self._host_input = host_input
         self._fill = 0
 
@@ -101,3 +107,9 @@ class CausalLumaWindowPacker:
                 casting="unsafe",
             )
         self._fill = min(self._fill + 1, int(self._host_input.shape[1]))
+
+
+def _validate_float_tensor_dtype(array: np.ndarray, *, name: str) -> None:
+    expected = np.dtype(FLOAT_TENSOR_DTYPE)
+    if array.dtype != expected:
+        raise ValueError(f"expected {name} dtype {expected.name}, got {array.dtype}")
