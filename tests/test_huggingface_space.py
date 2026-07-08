@@ -45,7 +45,7 @@ def test_space_prediction_can_preserve_original_chroma(
     assert not np.array_equal(pixels[..., 0], pixels[..., 1])
 
 
-def test_space_prediction_resizes_large_inputs_before_inference(
+def test_space_prediction_preserves_large_input_size(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = _load_space_app()
@@ -56,7 +56,7 @@ def test_space_prediction_resizes_large_inputs_before_inference(
 
     enhanced = app.enhance_demo_image(image, preserve_color=False, max_long_edge=1000)
 
-    assert enhanced.size == (1000, 500)
+    assert enhanced.size == (2000, 1000)
 
 
 def test_space_default_example_image_exists() -> None:

@@ -56,9 +56,11 @@ def enhance_demo_image(
 ) -> Image.Image:
     if input_image is None:
         raise ValueError("Upload an image before running NightJet.")
-    original = _prepare_image(input_image, max_long_edge=max_long_edge)
+    original = _coerce_demo_image(input_image)
+    inference_image = _resize_for_demo(original, max_long_edge=max_long_edge)
     enhancer = _load_enhancer(_device())
-    return enhancer.enhance_image(original, preserve_color=preserve_color)
+    enhanced = enhancer.enhance_image(inference_image, preserve_color=preserve_color)
+    return _resize_to_match(enhanced, original.size)
 
 
 @_gpu(duration=120)
@@ -111,18 +113,19 @@ def build_demo() -> Any:
         with gr.Tabs():
             with gr.Tab("Image"):
                 with gr.Row():
-                    input_image = gr.Image(
-                        value=str(DEFAULT_EXAMPLE_IMAGE),
-                        type="pil",
-                        label="Input image",
-                    )
                     with gr.Column():
+                        input_image = gr.Image(
+                            value=str(DEFAULT_EXAMPLE_IMAGE),
+                            type="pil",
+                            label="Input image",
+                        )
                         preserve_color = gr.Checkbox(
                             label="Preserve original color",
                             value=False,
                         )
                         run_button = gr.Button("Enhance image", variant="primary")
-                enhanced = gr.Image(type="pil", label="NightJet output")
+                    with gr.Column():
+                        enhanced = gr.Image(type="pil", label="NightJet output")
                 run_button.click(
                     fn=enhance_demo_image,
                     inputs=[input_image, preserve_color],
@@ -168,12 +171,16 @@ def _download_weights() -> Path:
     return Path(hub.hf_hub_download(repo_id=MODEL_REPO_ID, filename=WEIGHTS_FILENAME))
 
 
-def _prepare_image(input_image: Image.Image | np.ndarray, *, max_long_edge: int) -> Image.Image:
+def _coerce_demo_image(input_image: Image.Image | np.ndarray) -> Image.Image:
     if isinstance(input_image, Image.Image):
-        image = input_image.convert("RGB")
-    else:
-        image = _array_to_image(np.asarray(input_image))
-    return _resize_for_demo(image, max_long_edge=max_long_edge)
+        return input_image.convert("RGB")
+    return _array_to_image(np.asarray(input_image))
+
+
+def _resize_to_match(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+    if image.size == size:
+        return image
+    return image.resize(size, Image.Resampling.LANCZOS)
 
 
 def _array_to_image(array: np.ndarray) -> Image.Image:
