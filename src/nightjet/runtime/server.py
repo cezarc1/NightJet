@@ -11,6 +11,7 @@ from typing import Any
 
 import numpy as np
 
+from nightjet.motion import DEFAULT_MOTION_BUDGET
 from nightjet.runtime.enhancer import TensorRTNightJetEnhancer
 
 
@@ -26,6 +27,7 @@ class RuntimeServerConfig:
     port: int = 8000
     max_frames: int | None = None
     exit_after_max_frames: bool = False
+    motion_budget: float | None = DEFAULT_MOTION_BUDGET
 
 
 @dataclass
@@ -54,7 +56,10 @@ class RuntimeMetrics:
 
 def run_runtime_server(config: RuntimeServerConfig) -> RuntimeMetrics:
     metrics = RuntimeMetrics()
-    enhancer = TensorRTNightJetEnhancer.from_engine(config.engine_path)
+    enhancer = TensorRTNightJetEnhancer.from_engine(
+        config.engine_path,
+        motion_budget=config.motion_budget,
+    )
 
     if config.exit_after_max_frames:
         _capture_loop(config, enhancer, metrics)

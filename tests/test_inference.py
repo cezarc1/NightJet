@@ -274,9 +274,7 @@ def test_video_history_collapses_on_fast_pan(tmp_path: Path) -> None:
 
 def test_motion_budget_can_be_disabled_for_full_causal_history(tmp_path: Path) -> None:
     checkpoint = _write_identity_checkpoint(tmp_path, input_frames=3)
-    enhancer = NightJetEnhancer.from_checkpoint(
-        checkpoint, device="cpu", motion_budget=None
-    )
+    enhancer = NightJetEnhancer.from_checkpoint(checkpoint, device="cpu", motion_budget=None)
     calm = np.full((16, 16, 3), 40, dtype=np.uint8)
     jump = np.full((16, 16, 3), 200, dtype=np.uint8)
 

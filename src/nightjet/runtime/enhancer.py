@@ -16,6 +16,7 @@ from nightjet.inference import (
     _open_video_reader,
     _open_video_writer,
 )
+from nightjet.motion import DEFAULT_MOTION_BUDGET
 from nightjet.runtime.tensorrt import TensorRTLumaEnhancer, TensorRTLumaWindowEnhancer
 from nightjet.runtime.tensors import U8_FRAME_DTYPE, U8Frame
 
@@ -29,9 +30,14 @@ class TensorRTNightJetEnhancer:
         self.last_metrics: dict[str, float] = {}
 
     @classmethod
-    def from_engine(cls, engine_path: Path) -> TensorRTNightJetEnhancer:
+    def from_engine(
+        cls,
+        engine_path: Path,
+        *,
+        motion_budget: float | None = DEFAULT_MOTION_BUDGET,
+    ) -> TensorRTNightJetEnhancer:
         try:
-            return cls(TensorRTLumaWindowEnhancer(engine_path))
+            return cls(TensorRTLumaWindowEnhancer(engine_path, motion_budget=motion_budget))
         except ValueError as exc:
             if "1xNxHxW" not in str(exc):
                 raise
