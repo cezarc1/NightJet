@@ -127,8 +127,8 @@ unavailable, leave the Space on CPU Basic and switch hardware later.
 4. Confirm the enhanced output is grayscale RGB, matches the input dimensions,
    and the input image remains visible in the upload pane.
 5. Enable `Preserve original color` and confirm the output keeps visible chroma.
-6. Upload a short video clip in the `Video` tab and confirm the output is a
-   side-by-side before/after clip.
+6. Upload a short video clip in the `Video` tab and confirm the enhanced output
+   clip matches the input frame dimensions.
 
 ## Update Policy
 

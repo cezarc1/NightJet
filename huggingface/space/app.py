@@ -75,7 +75,7 @@ def enhance_demo_video(
     input_path = Path(input_video)
     if not input_path.exists():
         raise FileNotFoundError(f"video not found: {input_path}")
-    output_path = Path(tempfile.mkdtemp(prefix="nightjet-space-")) / "nightjet-side-by-side.mp4"
+    output_path = Path(tempfile.mkdtemp(prefix="nightjet-space-")) / "nightjet-output.mp4"
     enhancer = _load_enhancer(_device())
     enhancer.reset()
 
@@ -90,16 +90,19 @@ def enhance_demo_video(
         for index, frame in enumerate(_iter_video_frames(reader)):
             if index >= max_frames:
                 break
+            source = _array_to_image(_coerce_rgb_array(frame))
+            output_size = _h264_safe_size(source.size)
             rgb = _resize_for_video_demo(
-                _array_to_image(_coerce_rgb_array(frame)),
+                source,
                 max_long_edge=max_long_edge,
             )
             enhanced = enhancer._enhance_video_frame(
                 np.asarray(rgb, dtype=np.uint8),
-                side_by_side=True,
+                side_by_side=False,
                 preserve_color=preserve_color,
             )
-            writer.append_data(enhanced)
+            output = _resize_to_match(Image.fromarray(enhanced), output_size)
+            writer.append_data(np.asarray(output, dtype=np.uint8))
     return str(output_path)
 
 
@@ -138,14 +141,15 @@ def build_demo() -> Any:
                     f"at up to {MAX_VIDEO_FPS:g} fps and {MAX_VIDEO_LONG_EDGE}px long edge."
                 )
                 with gr.Row():
-                    input_video = gr.Video(label="Input clip")
                     with gr.Column():
+                        input_video = gr.Video(label="Input clip")
                         video_preserve_color = gr.Checkbox(
                             label="Preserve original color",
                             value=False,
                         )
                         run_video_button = gr.Button("Enhance clip", variant="primary")
-                output_video = gr.Video(label="Before / after clip")
+                    with gr.Column():
+                        output_video = gr.Video(label="NightJet output")
                 run_video_button.click(
                     fn=enhance_demo_video,
                     inputs=[input_video, video_preserve_color],
@@ -181,6 +185,11 @@ def _resize_to_match(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     if image.size == size:
         return image
     return image.resize(size, Image.Resampling.LANCZOS)
+
+
+def _h264_safe_size(size: tuple[int, int]) -> tuple[int, int]:
+    width, height = size
+    return (max(2, width - width % 2), max(2, height - height % 2))
 
 
 def _array_to_image(array: np.ndarray) -> Image.Image:

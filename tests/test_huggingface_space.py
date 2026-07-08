@@ -67,7 +67,7 @@ def test_space_default_example_image_exists() -> None:
         assert image.size == (1280, 720)
 
 
-def test_space_video_conversion_writes_side_by_side_clip(
+def test_space_video_conversion_writes_enhanced_clip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = _load_space_app()
@@ -90,10 +90,10 @@ def test_space_video_conversion_writes_side_by_side_clip(
     assert output_path.exists()
     output_frames = imageio.mimread(output_path)
     assert len(output_frames) == 3
-    assert np.asarray(output_frames[0]).shape[:2] == (8, 16)
+    assert np.asarray(output_frames[0]).shape[:2] == (8, 8)
 
 
-def test_space_video_conversion_writes_h264_safe_even_dimensions(
+def test_space_video_conversion_preserves_frame_size_after_bounded_inference(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app = _load_space_app()
@@ -117,6 +117,7 @@ def test_space_video_conversion_writes_h264_safe_even_dimensions(
 
     output_frames = imageio.mimread(output_path)
     height, width = np.asarray(output_frames[0]).shape[:2]
+    assert (height, width) == (90, 160)
     assert height % 2 == 0
     assert width % 2 == 0
 

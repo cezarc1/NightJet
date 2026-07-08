@@ -18,9 +18,9 @@ enhancement model.
 Start with the bundled Jetson/Arducam example image or upload your own image.
 The image demo returns the enhanced image while keeping the input visible.
 
-The video tab converts a short uploaded clip into a before/after comparison on
-ZeroGPU. Longer local video inference, ONNX export, TensorRT engine builds, and
-Jetson deployment are documented in the
+The video tab converts a short uploaded clip into an enhanced output clip on
+ZeroGPU while keeping the uploaded input visible. Longer local video inference,
+ONNX export, TensorRT engine builds, and Jetson deployment are documented in the
 [NightJet GitHub repo](https://github.com/cezarc1/nightjet).
 
 > Stay on Hugging Face to test an image quickly or download the default model
