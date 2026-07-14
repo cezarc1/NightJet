@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import time
 from collections.abc import Sequence
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -78,8 +79,9 @@ class TensorRTLumaEnhancer:
         write_u8_luma_to_nchw_float(luma, self._host_input)
         with self._torch.cuda.stream(self._stream):
             self._input_tensor.copy_(self._input_cpu_tensor, non_blocking=True)
-            if not self._context.execute_async_v3(self._stream.cuda_stream):
-                raise RuntimeError("TensorRT execution failed")
+            with _nvtx_range(self._torch, "nightjet.tensorrt.execute"):
+                if not self._context.execute_async_v3(self._stream.cuda_stream):
+                    raise RuntimeError("TensorRT execution failed")
             self._output_cpu_tensor.copy_(self._output_tensor, non_blocking=False)
         self._stream.synchronize()
         elapsed_ms = (time.perf_counter() - start) * 1000.0
@@ -202,8 +204,9 @@ class TensorRTLumaWindowEnhancer:
             copy_end_event = self._torch.cuda.Event(enable_timing=True)
             trt_start_event.record(self._stream)
             execute_start = time.perf_counter()
-            if not self._context.execute_async_v3(self._stream.cuda_stream):
-                raise RuntimeError("TensorRT execution failed")
+            with _nvtx_range(self._torch, "nightjet.tensorrt.execute"):
+                if not self._context.execute_async_v3(self._stream.cuda_stream):
+                    raise RuntimeError("TensorRT execution failed")
             execute_submit_ms = (time.perf_counter() - execute_start) * 1000.0
             trt_end_event.record(self._stream)
             copy_start_event.record(self._stream)
@@ -233,6 +236,13 @@ class TensorRTLumaWindowEnhancer:
             "input_cpu_pinned": float(self._input_cpu_pinned),
             "output_cpu_pinned": float(self._output_cpu_pinned),
         }
+
+
+def _nvtx_range(torch: Any, name: str) -> Any:
+    try:
+        return torch.cuda.nvtx.range(name)
+    except AttributeError:
+        return nullcontext()
 
 
 def _tensor_names(engine: Any, trt: Any) -> tuple[str, str]:

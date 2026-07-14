@@ -403,6 +403,71 @@ def test_cli_serve_can_disable_motion_budget(
     assert seen["motion_budget"] is None
 
 
+def test_cli_serve_passes_explicit_model_id_to_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import nightjet.cli as nightjet_cli
+    from nightjet.runtime.server import RuntimeMetrics
+
+    engine = tmp_path / "nightjet.plan"
+    engine.write_bytes(b"engine")
+    seen: dict[str, Any] = {}
+
+    def fake_run(config: Any) -> RuntimeMetrics:
+        seen["model_id"] = config.model_id
+        return RuntimeMetrics(model_id=config.model_id)
+
+    monkeypatch.setattr(nightjet_cli, "run_runtime_server", fake_run)
+    result = CliRunner().invoke(
+        app,
+        [
+            "serve",
+            "--engine",
+            str(engine),
+            "--source",
+            "0",
+            "--model-id",
+            "nightjet-edge-v1-detail",
+            "--exit-after-max-frames",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["model_id"] == "nightjet-edge-v1-detail"
+
+
+def test_cli_serve_reads_model_id_from_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import nightjet.cli as nightjet_cli
+    from nightjet.runtime.server import RuntimeMetrics
+
+    engine = tmp_path / "nightjet.plan"
+    engine.write_bytes(b"engine")
+    seen: dict[str, Any] = {}
+
+    def fake_run(config: Any) -> RuntimeMetrics:
+        seen["model_id"] = config.model_id
+        return RuntimeMetrics(model_id=config.model_id)
+
+    monkeypatch.setenv("NIGHTJET_MODEL_ID", "nightjet-edge-v1-detail")
+    monkeypatch.setattr(nightjet_cli, "run_runtime_server", fake_run)
+    result = CliRunner().invoke(
+        app,
+        [
+            "serve",
+            "--engine",
+            str(engine),
+            "--source",
+            "0",
+            "--exit-after-max-frames",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["model_id"] == "nightjet-edge-v1-detail"
+
+
 def test_cli_build_engine_dry_run_uses_exported_input_name(tmp_path: Path) -> None:
     runner = CliRunner()
     onnx = tmp_path / "nightjet.onnx"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Annotated
 
@@ -212,6 +213,7 @@ def build_engine(
 @app.command()
 def serve(
     engine: Annotated[Path, typer.Option(exists=True, readable=True)],
+    model_id: Annotated[str | None, typer.Option()] = None,
     source: Annotated[str | None, typer.Option()] = None,
     camera: Annotated[Path | None, typer.Option()] = None,
     resolution: Annotated[str, typer.Option()] = "1280x720",
@@ -239,10 +241,12 @@ def serve(
     max_frames: Annotated[int | None, typer.Option()] = None,
     exit_after_max_frames: Annotated[bool, typer.Option("--exit-after-max-frames")] = False,
 ) -> None:
+    resolved_model_id = model_id or os.environ.get("NIGHTJET_MODEL_ID", "nightjet-edge-v1")
     metrics = run_runtime_server(
         RuntimeServerConfig(
             engine_path=engine,
             motion_budget=None if disable_motion_budget else motion_budget,
+            model_id=resolved_model_id,
             source=source,
             camera=camera,
             resolution=resolution,
