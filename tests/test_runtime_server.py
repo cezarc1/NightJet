@@ -1,7 +1,12 @@
 from pathlib import Path
 from typing import Any
 
-from nightjet.runtime.server import RuntimeServerConfig, run_runtime_server
+from nightjet.runtime.server import (
+    RuntimeMetrics,
+    RuntimeServerConfig,
+    render_prometheus_metrics,
+    run_runtime_server,
+)
 
 
 def test_runtime_server_config_preserves_source_positional_argument(tmp_path: Path) -> None:
@@ -49,3 +54,49 @@ def test_run_runtime_server_passes_motion_budget_to_engine(
     )
 
     assert seen == {"engine_path": engine_path, "motion_budget": 0.12}
+
+
+def test_runtime_metrics_report_model_fps_freshness_and_inference_histogram() -> None:
+    metrics = RuntimeMetrics(model_id="nightjet-edge-v1-detail")
+
+    metrics.record_frame(inference_seconds=0.012, timestamp=100.0)
+    metrics.record_frame(inference_seconds=0.020, timestamp=101.0)
+
+    rendered = render_prometheus_metrics(metrics)
+
+    assert (
+        'nightjet_runtime_info{task="vision",runtime="tensorrt-fp16",'
+        'model_id="nightjet-edge-v1-detail"} 1'
+    ) in rendered
+    assert "nightjet_capture_fps 1.000000" in rendered
+    assert "nightjet_last_frame_timestamp_seconds 101.000000" in rendered
+    assert 'nightjet_inference_duration_seconds_bucket{le="0.025"} 2' in rendered
+    assert "nightjet_inference_duration_seconds_sum 0.032000" in rendered
+    assert "nightjet_inference_duration_seconds_count 2" in rendered
+
+
+def test_runtime_metrics_escape_model_label_values() -> None:
+    metrics = RuntimeMetrics(model_id='nightjet"detail\\candidate')
+
+    rendered = render_prometheus_metrics(metrics)
+
+    assert 'model_id="nightjet\\"detail\\\\candidate"' in rendered
+
+
+def test_runtime_metrics_only_export_known_engine_measurements() -> None:
+    metrics = RuntimeMetrics()
+    metrics.record_frame(
+        inference_seconds=0.01,
+        timestamp=100.0,
+        runtime_metrics={
+            "causal_window_effective_fill": 2.0,
+            "trt_gpu_ms": 8.5,
+            'bad metric{label="x"}': 99.0,
+        },
+    )
+
+    rendered = render_prometheus_metrics(metrics)
+
+    assert "nightjet_runtime_causal_window_effective_fill 2.000000" in rendered
+    assert "nightjet_runtime_trt_gpu_ms 8.500000" in rendered
+    assert "bad metric" not in rendered

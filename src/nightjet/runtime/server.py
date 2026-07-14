@@ -4,6 +4,7 @@ import importlib
 import json
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -28,10 +29,12 @@ class RuntimeServerConfig:
     max_frames: int | None = None
     exit_after_max_frames: bool = False
     motion_budget: float | None = DEFAULT_MOTION_BUDGET
+    model_id: str = "nightjet-edge-v1"
 
 
 @dataclass
 class RuntimeMetrics:
+    model_id: str = "nightjet-edge-v1"
     ready: bool = False
     frames_total: int = 0
     errors_total: int = 0
@@ -40,6 +43,40 @@ class RuntimeMetrics:
     last_error: str | None = None
     last_inference_ms: float = 0.0
     last_metrics: dict[str, float] = field(default_factory=dict)
+    capture_fps: float = 0.0
+    inference_duration_sum: float = 0.0
+    inference_duration_count: int = 0
+    inference_duration_buckets: list[int] = field(
+        default_factory=lambda: [0] * len(INFERENCE_DURATION_BUCKETS)
+    )
+    _frame_timestamps: deque[float] = field(default_factory=deque, repr=False)
+
+    def record_frame(
+        self,
+        *,
+        inference_seconds: float,
+        timestamp: float,
+        runtime_metrics: dict[str, float] | None = None,
+    ) -> None:
+        self.ready = True
+        self.frames_total += 1
+        self.last_frame_at = timestamp
+        self.last_inference_ms = inference_seconds * 1000.0
+        self.last_metrics = runtime_metrics or {}
+        self.last_error = None
+        self.inference_duration_sum += inference_seconds
+        self.inference_duration_count += 1
+        for index, upper_bound in enumerate(INFERENCE_DURATION_BUCKETS):
+            if inference_seconds <= upper_bound:
+                self.inference_duration_buckets[index] += 1
+
+        self._frame_timestamps.append(timestamp)
+        cutoff = timestamp - 5.0
+        while len(self._frame_timestamps) > 1 and self._frame_timestamps[0] < cutoff:
+            self._frame_timestamps.popleft()
+        if len(self._frame_timestamps) > 1:
+            elapsed = self._frame_timestamps[-1] - self._frame_timestamps[0]
+            self.capture_fps = (len(self._frame_timestamps) - 1) / elapsed if elapsed > 0 else 0.0
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -55,7 +92,7 @@ class RuntimeMetrics:
 
 
 def run_runtime_server(config: RuntimeServerConfig) -> RuntimeMetrics:
-    metrics = RuntimeMetrics()
+    metrics = RuntimeMetrics(model_id=config.model_id)
     enhancer = TensorRTNightJetEnhancer.from_engine(
         config.engine_path,
         motion_budget=config.motion_budget,
@@ -87,6 +124,12 @@ def run_runtime_server(config: RuntimeServerConfig) -> RuntimeMetrics:
 
 def render_prometheus_metrics(metrics: RuntimeMetrics) -> str:
     lines = [
+        "# HELP nightjet_runtime_info Static NightJet runtime labels.",
+        "# TYPE nightjet_runtime_info gauge",
+        (
+            'nightjet_runtime_info{task="vision",runtime="tensorrt-fp16",'
+            f'model_id="{_escape_label(metrics.model_id)}"}} 1'
+        ),
         "# HELP nightjet_ready Whether the NightJet runtime has processed a frame.",
         "# TYPE nightjet_ready gauge",
         f"nightjet_ready {1 if metrics.ready else 0}",
@@ -99,11 +142,54 @@ def render_prometheus_metrics(metrics: RuntimeMetrics) -> str:
         "# HELP nightjet_last_inference_ms Last measured inference latency.",
         "# TYPE nightjet_last_inference_ms gauge",
         f"nightjet_last_inference_ms {metrics.last_inference_ms:.6f}",
+        "# HELP nightjet_capture_fps Rolling capture and inference frame rate.",
+        "# TYPE nightjet_capture_fps gauge",
+        f"nightjet_capture_fps {metrics.capture_fps:.6f}",
+        "# HELP nightjet_last_frame_timestamp_seconds Unix timestamp of the last processed frame.",
+        "# TYPE nightjet_last_frame_timestamp_seconds gauge",
+        f"nightjet_last_frame_timestamp_seconds {(metrics.last_frame_at or 0.0):.6f}",
+        "# HELP nightjet_inference_duration_seconds TensorRT inference duration.",
+        "# TYPE nightjet_inference_duration_seconds histogram",
     ]
-    for name, value in sorted(metrics.last_metrics.items()):
-        safe_name = name.replace("-", "_")
-        lines.append(f"nightjet_runtime_{safe_name} {float(value):.6f}")
+    for upper_bound, count in zip(
+        INFERENCE_DURATION_BUCKETS,
+        metrics.inference_duration_buckets,
+        strict=True,
+    ):
+        lines.append(f'nightjet_inference_duration_seconds_bucket{{le="{upper_bound:g}"}} {count}')
+    lines.extend(
+        [
+            "nightjet_inference_duration_seconds_bucket"
+            f'{{le="+Inf"}} {metrics.inference_duration_count}',
+            f"nightjet_inference_duration_seconds_sum {metrics.inference_duration_sum:.6f}",
+            f"nightjet_inference_duration_seconds_count {metrics.inference_duration_count}",
+        ]
+    )
+    for name in sorted(RUNTIME_METRIC_NAMES):
+        if name in metrics.last_metrics:
+            lines.append(f"nightjet_runtime_{name} {float(metrics.last_metrics[name]):.6f}")
     return "\n".join(lines) + "\n"
+
+
+INFERENCE_DURATION_BUCKETS = (0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25)
+RUNTIME_METRIC_NAMES = {
+    "causal_window_effective_fill",
+    "causal_window_fill",
+    "execute_submit_ms",
+    "input_copy_submit_ms",
+    "input_cpu_pinned",
+    "output_copy_gpu_ms",
+    "output_copy_ms",
+    "output_cpu_pinned",
+    "pack_ms",
+    "stream_sync_ms",
+    "tensorrt_ms",
+    "trt_gpu_ms",
+}
+
+
+def _escape_label(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
 def _capture_loop(
@@ -133,12 +219,12 @@ def _capture_loop(
                 continue
             start = time.perf_counter()
             enhancer.process_luma_u8(_frame_to_luma_u8(cv2, frame))
-            metrics.last_inference_ms = (time.perf_counter() - start) * 1000.0
-            metrics.last_metrics = enhancer.last_metrics
-            metrics.frames_total += 1
-            metrics.last_frame_at = time.time()
-            metrics.ready = True
-            metrics.last_error = None
+            inference_seconds = time.perf_counter() - start
+            metrics.record_frame(
+                inference_seconds=inference_seconds,
+                timestamp=time.time(),
+                runtime_metrics=enhancer.last_metrics,
+            )
             if config.max_frames is not None and metrics.frames_total >= config.max_frames:
                 return
     except Exception as exc:
